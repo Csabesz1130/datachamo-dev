@@ -1,3 +1,5 @@
+# src/gui/filter_tab.py
+
 import tkinter as tk
 from tkinter import ttk
 from src.utils.logger import app_logger
@@ -37,6 +39,9 @@ class FilterTab:
         # FFT filter variables
         self.use_fft = tk.BooleanVar(value=False)
         self.fft_threshold = tk.DoubleVar(value=0.2)
+        self.use_freq_band = tk.BooleanVar(value=False)
+        self.min_freq = tk.StringVar(value="0")
+        self.max_freq = tk.StringVar(value="500")
         
         # Butterworth filter variables
         self.use_butterworth = tk.BooleanVar(value=False)
@@ -82,10 +87,12 @@ class FilterTab:
         fft_frame = ttk.LabelFrame(self.frame, text="FFT Filter")
         fft_frame.pack(fill='x', padx=5, pady=5)
         
+        # Enable checkbox
         ttk.Checkbutton(fft_frame, text="Enable",
                        variable=self.use_fft,
                        command=self.on_filter_change).pack(pady=2)
         
+        # Threshold control
         threshold_frame = ttk.Frame(fft_frame)
         threshold_frame.pack(fill='x', padx=5, pady=2)
         ttk.Label(threshold_frame, text="Threshold:").pack(side='left')
@@ -93,16 +100,33 @@ class FilterTab:
                  orient='horizontal', command=lambda _: self.on_filter_change()
                  ).pack(side='left', fill='x', expand=True)
         ttk.Label(threshold_frame, textvariable=self.fft_threshold).pack(side='right')
+        
+        # Frequency band controls
+        band_frame = ttk.Frame(fft_frame)
+        band_frame.pack(fill='x', padx=5, pady=2)
+        ttk.Checkbutton(band_frame, text="Use Frequency Band",
+                       variable=self.use_freq_band,
+                       command=self.on_filter_change).pack(side='left')
+        
+        # Min/Max frequency controls
+        freq_frame = ttk.Frame(fft_frame)
+        freq_frame.pack(fill='x', padx=5, pady=2)
+        ttk.Label(freq_frame, text="Freq Range (Hz):").pack(side='left')
+        ttk.Entry(freq_frame, textvariable=self.min_freq, width=8).pack(side='left')
+        ttk.Label(freq_frame, text=" - ").pack(side='left')
+        ttk.Entry(freq_frame, textvariable=self.max_freq, width=8).pack(side='left')
 
     def setup_butterworth_controls(self):
         """Setup Butterworth filter controls"""
         butter_frame = ttk.LabelFrame(self.frame, text="Butterworth Filter")
         butter_frame.pack(fill='x', padx=5, pady=5)
         
+        # Enable checkbox
         ttk.Checkbutton(butter_frame, text="Enable",
                        variable=self.use_butterworth,
                        command=self.on_filter_change).pack(pady=2)
         
+        # Cutoff frequency control
         cutoff_frame = ttk.Frame(butter_frame)
         cutoff_frame.pack(fill='x', padx=5, pady=2)
         ttk.Label(cutoff_frame, text="Cutoff Frequency:").pack(side='left')
@@ -111,6 +135,7 @@ class FilterTab:
                  ).pack(side='left', fill='x', expand=True)
         ttk.Label(cutoff_frame, textvariable=self.butter_cutoff).pack(side='right')
         
+        # Order control
         order_frame = ttk.Frame(butter_frame)
         order_frame.pack(fill='x', padx=5, pady=2)
         ttk.Label(order_frame, text="Order:").pack(side='left')
@@ -124,6 +149,7 @@ class FilterTab:
         extract_frame = ttk.LabelFrame(self.frame, text="Extract-Add Filter")
         extract_frame.pack(fill='x', padx=5, pady=5)
         
+        # Enable checkbox
         ttk.Checkbutton(extract_frame, text="Enable",
                        variable=self.use_extract_add,
                        command=self.on_filter_change).pack(pady=2)
@@ -153,29 +179,52 @@ class FilterTab:
         """Get the currently active filters and their parameters"""
         filters = {}
         
+        # Savitzky-Golay filter parameters
         if self.use_savgol.get():
             filters['savgol_params'] = {
                 'window_length': self.savgol_window.get(),
                 'polyorder': self.savgol_order.get()
             }
         
+        # FFT filter parameters
         if self.use_fft.get():
-            filters['fft_threshold'] = self.fft_threshold.get()
+            filters['fft_params'] = {
+                'threshold': self.fft_threshold.get(),
+                'sampling_rate': 1000.0  # Default sampling rate
+            }
+            if self.use_freq_band.get():
+                try:
+                    min_freq = float(self.min_freq.get())
+                    max_freq = float(self.max_freq.get())
+                    if min_freq >= 0 and max_freq > min_freq:
+                        filters['fft_params'].update({
+                            'min_freq': min_freq,
+                            'max_freq': max_freq
+                        })
+                    else:
+                        app_logger.warning("Invalid frequency range values, using default")
+                except ValueError:
+                    app_logger.warning("Invalid frequency range values, using default")
         
+        # Butterworth filter parameters
         if self.use_butterworth.get():
             filters['butter_params'] = {
-                'cutoff': self.butter_cutoff.get(),
-                'order': self.butter_order.get(),
-                'fs': 1000.0  # Default sampling frequency
+                'cutoff': float(self.butter_cutoff.get()),
+                'fs': 1000.0,  # Default sampling frequency
+                'order': int(self.butter_order.get())
             }
         
+        # Extract-Add filter parameters
         if self.use_extract_add.get():
             filters['extract_add_params'] = {
-                'prominence_threshold': self.extract_prominence.get(),
-                'width_range': (self.extract_width_min.get(), 
-                              self.extract_width_max.get())
+                'prominence_threshold': float(self.extract_prominence.get()),
+                'width_range': (
+                    int(self.extract_width_min.get()),
+                    int(self.extract_width_max.get())
+                )
             }
         
+        app_logger.debug(f"Active filters configuration: {filters}")
         return filters
 
     def on_filter_change(self, *args):
@@ -198,6 +247,8 @@ class FilterTab:
         self.savgol_window.set(51)
         self.savgol_order.set(3)
         self.fft_threshold.set(0.2)
+        self.min_freq.set("0")
+        self.max_freq.set("500")
         self.butter_cutoff.set(0.1)
         self.butter_order.set(5)
         self.extract_prominence.set(200)

@@ -1,6 +1,13 @@
 import numpy as np
-from scipy.signal import savgol_filter, butter, filtfilt, find_peaks
-from scipy.fft import fft, ifft
+from scipy.signal import (
+    savgol_filter, 
+    butter, 
+    filtfilt, 
+    find_peaks, 
+    sosfilt, 
+    butter as butter_design
+)
+from scipy.fft import fft, ifft, fftfreq  
 from src.utils.logger import app_logger
 
 
@@ -31,105 +38,135 @@ def apply_savgol_filter(data, window_length=51, polyorder=3):
         raise
 
 
-def apply_fft_filter(data, threshold=0.1):
+def apply_fft_filter(data, threshold=0.2, min_freq=None, max_freq=None, sampling_rate=1000.0):
     """
-    Apply FFT-based noise filtering.
+    Bulletproof FFT-based noise filtering.
     
     Args:
         data (np.array): Input signal data
         threshold (float): Threshold for frequency components (0 to 1)
-        
+        min_freq (float, optional): Minimum frequency to keep (Hz)
+        max_freq (float, optional): Maximum frequency to keep (Hz)
+        sampling_rate (float): Sampling rate of the signal in Hz
+    
     Returns:
         np.array: Filtered data
     """
-    app_logger.debug(f"Applying FFT filter with threshold: {threshold}")
     try:
-        # Compute FFT
-        fft_data = fft(data)
+        # Ensure we have a numpy array
+        data = np.asarray(data)
         
-        # Get magnitudes and create mask for significant frequencies
-        magnitudes = np.abs(fft_data)
-        max_magnitude = np.max(magnitudes)
-        mask = magnitudes > (threshold * max_magnitude)
+        # Perform FFT
+        spectrum = fft(data)
         
-        # Apply mask and inverse transform
-        filtered_fft = fft_data * mask
-        filtered_data = np.real(ifft(filtered_fft))
+        # Get magnitude spectrum
+        magnitude = np.abs(spectrum)
         
-        app_logger.info("FFT filter applied successfully")
+        # Create a mask based on magnitude threshold
+        threshold_value = threshold * np.max(magnitude)
+        mask = magnitude > threshold_value
+        
+        # Apply frequency band filter if specified
+        if min_freq is not None and max_freq is not None:
+            freqs = fftfreq(len(data), d=1/sampling_rate)
+            freq_mask = (np.abs(freqs) >= min_freq) & (np.abs(freqs) <= max_freq)
+            mask = mask & freq_mask
+        
+        # Keep DC component
+        mask[0] = True
+        
+        # Apply filter by zeroing out unwanted frequencies
+        filtered_spectrum = spectrum.copy()
+        filtered_spectrum[~mask] = 0
+        
+        # Inverse FFT
+        filtered_data = np.real(ifft(filtered_spectrum))
+        
+        # Log retained components
+        retained = np.sum(mask) / len(mask) * 100
+        app_logger.info(f"FFT filter retained {retained:.1f}% of frequency components")
+        
         return filtered_data
-    
+        
     except Exception as e:
-        app_logger.error(f"Error applying FFT filter: {str(e)}")
+        app_logger.error(f"Error in FFT filter: {e}")
+        app_logger.error(f"Data shape: {data.shape if 'data' in locals() else 'N/A'}")
         raise
-
 
 def butter_lowpass_filter(data, cutoff, fs=1000.0, order=5):
     """
-    Apply Butterworth low-pass filter.
+    Apply improved Butterworth low-pass filter with better stability.
     
     Args:
         data (np.array): Input signal data
-        cutoff (float): Cutoff frequency
-        fs (float): Sampling frequency
+        cutoff (float): Cutoff frequency in Hz
+        fs (float): Sampling frequency in Hz
         order (int): Filter order
         
     Returns:
         np.array: Filtered data
     """
-    app_logger.debug(f"Applying Butterworth filter: cutoff={cutoff}, fs={fs}, order={order}")
+    app_logger.debug(f"Applying Butterworth filter: cutoff={cutoff}Hz, order={order}")
     try:
-        nyquist = 0.5 * fs
-        normal_cutoff = cutoff / nyquist
+        # Convert cutoff to Hz if it's normalized
+        if cutoff <= 1:
+            cutoff = cutoff * (fs/2)
+            
+        # Ensure cutoff is valid
+        nyquist = fs / 2
+        if cutoff >= nyquist:
+            cutoff = 0.99 * nyquist
+            app_logger.warning(f"Cutoff too high, adjusted to {cutoff:.1f} Hz")
+            
+        # Design filter using second-order sections for better numerical stability
+        sos = butter_design(order, cutoff, btype='low', fs=fs, output='sos')
         
-        # Create filter coefficients
-        b, a = butter(order, normal_cutoff, btype='low', analog=False)
+        # Apply zero-phase filtering
+        filtered_data = sosfilt(sos, data)
         
-        # Apply filter
-        filtered_data = filtfilt(b, a, data)
+        # Apply forward-backward filtering to ensure zero phase
+        filtered_data = sosfilt(sos, filtered_data[::-1])[::-1]
         
-        app_logger.info("Butterworth filter applied successfully")
         return filtered_data
-    
+        
     except Exception as e:
-        app_logger.error(f"Error applying Butterworth filter: {str(e)}")
+        app_logger.error(f"Error in Butterworth filter: {str(e)}")
         raise
 
-
-def combined_filter(data, savgol_params=None, fft_threshold=None, butter_params=None):
+def combined_filter(data, savgol_params=None, fft_params=None, butter_params=None, 
+                   extract_add_params=None):
     """
-    Apply multiple filters in sequence.
-    
-    Args:
-        data (np.array): Input signal data
-        savgol_params (dict): Parameters for Savitzky-Golay filter
-        fft_threshold (float): Threshold for FFT filter
-        butter_params (dict): Parameters for Butterworth filter
-        
-    Returns:
-        np.array: Filtered data
+    Apply multiple filters in sequence with improved FFT handling.
     """
     app_logger.info("Starting combined filtering process")
-    filtered_data = data.copy()
+    filtered_data = np.asarray(data).copy()
     
     try:
         if savgol_params:
-            app_logger.debug("Applying Savitzky-Golay filter in combination")
+            app_logger.debug("Applying Savitzky-Golay filter")
             filtered_data = apply_savgol_filter(
                 filtered_data,
                 window_length=savgol_params['window_length'],
                 polyorder=savgol_params['polyorder']
             )
         
-        if fft_threshold is not None:
-            app_logger.debug("Applying FFT filter in combination")
-            filtered_data = apply_fft_filter(
-                filtered_data,
-                threshold=fft_threshold
-            )
+        if fft_params:
+            app_logger.debug("Applying FFT filter")
+            filter_params = {
+                'threshold': fft_params['threshold'],
+                'sampling_rate': fft_params.get('sampling_rate', 1000.0)
+            }
+            
+            # Add frequency band parameters if present
+            if fft_params.get('min_freq') is not None:
+                filter_params['min_freq'] = float(fft_params['min_freq'])
+            if fft_params.get('max_freq') is not None:
+                filter_params['max_freq'] = float(fft_params['max_freq'])
+                
+            filtered_data = apply_fft_filter(filtered_data, **filter_params)
         
         if butter_params:
-            app_logger.debug("Applying Butterworth filter in combination")
+            app_logger.debug("Applying Butterworth filter")
             filtered_data = butter_lowpass_filter(
                 filtered_data,
                 cutoff=butter_params['cutoff'],
@@ -137,9 +174,15 @@ def combined_filter(data, savgol_params=None, fft_threshold=None, butter_params=
                 order=butter_params['order']
             )
         
-        app_logger.info("Combined filtering completed successfully")
+        if extract_add_params:
+            app_logger.debug("Applying Extract-Add filter")
+            filtered_data = extract_add_filter(
+                filtered_data,
+                **extract_add_params
+            )
+            
         return filtered_data
-    
+        
     except Exception as e:
         app_logger.error(f"Error in combined filtering: {str(e)}")
         raise
@@ -312,68 +355,6 @@ def extract_add_filter(data, window_length=51, polyorder=3, prominence_threshold
         
     except Exception as e:
         app_logger.error(f"Error in extract-add filtering: {str(e)}")
-        raise
-
-def combined_filter(data, savgol_params=None, fft_threshold=None, butter_params=None, 
-                   use_extract_add=False, extract_add_params=None):
-    """
-    Apply multiple filters in sequence.
-    
-    Args:
-        data (np.array): Input signal data
-        savgol_params (dict): Parameters for Savitzky-Golay filter
-        fft_threshold (float): Threshold for FFT filter
-        butter_params (dict): Parameters for Butterworth filter
-        use_extract_add (bool): Whether to use extract-add filtering
-        extract_add_params (dict): Parameters for extract-add filter
-    
-    Returns:
-        np.array: Filtered data
-    """
-    app_logger.info("Starting combined filtering process")
-    filtered_data = data.copy()
-    
-    try:
-        if use_extract_add:
-            app_logger.debug("Applying extract-add filter in combination")
-            extract_add_params = extract_add_params or {}
-            filtered_data = extract_add_filter(
-                filtered_data,
-                window_length=extract_add_params.get('window_length', 51),
-                polyorder=extract_add_params.get('polyorder', 3),
-                prominence_threshold=extract_add_params.get('prominence_threshold', 200),
-                width_range=extract_add_params.get('width_range', (1, 50))
-            )
-        
-        if savgol_params:
-            app_logger.debug("Applying Savitzky-Golay filter in combination")
-            filtered_data = apply_savgol_filter(
-                filtered_data,
-                window_length=savgol_params['window_length'],
-                polyorder=savgol_params['polyorder']
-            )
-        
-        if fft_threshold is not None:
-            app_logger.debug("Applying FFT filter in combination")
-            filtered_data = apply_fft_filter(
-                filtered_data,
-                threshold=fft_threshold
-            )
-        
-        if butter_params:
-            app_logger.debug("Applying Butterworth filter in combination")
-            filtered_data = butter_lowpass_filter(
-                filtered_data,
-                cutoff=butter_params['cutoff'],
-                fs=butter_params.get('fs', 1000.0),
-                order=butter_params['order']
-            )
-        
-        app_logger.info("Combined filtering completed successfully")
-        return filtered_data
-        
-    except Exception as e:
-        app_logger.error(f"Error in combined filtering: {str(e)}")
         raise
 
 
