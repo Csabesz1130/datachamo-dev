@@ -25,7 +25,7 @@ class FilterTab:
         
         # Create filter controls
         self.setup_savgol_controls()
-        self.setup_fft_controls()
+        self.setup_wavelet_controls()
         self.setup_butterworth_controls()
         self.setup_extract_add_controls()
 
@@ -36,17 +36,15 @@ class FilterTab:
         self.savgol_window = tk.IntVar(value=51)
         self.savgol_order = tk.IntVar(value=3)
         
-        # FFT filter variables
-        self.use_fft = tk.BooleanVar(value=False)
-        self.fft_threshold = tk.DoubleVar(value=0.2)
-        self.use_freq_band = tk.BooleanVar(value=False)
-        self.min_freq = tk.StringVar(value="0")
-        self.max_freq = tk.StringVar(value="500")
         
         # Butterworth filter variables
         self.use_butterworth = tk.BooleanVar(value=False)
         self.butter_cutoff = tk.DoubleVar(value=0.1)
         self.butter_order = tk.IntVar(value=5)
+
+        # Wavelet filter variables
+        self.use_wavelet = tk.BooleanVar(value=False)
+        self.wavelet_level = tk.IntVar(value=4)
         
         # Extract-Add filter variables
         self.use_extract_add = tk.BooleanVar(value=False)
@@ -186,25 +184,13 @@ class FilterTab:
                 'polyorder': self.savgol_order.get()
             }
         
-        # FFT filter parameters
-        if self.use_fft.get():
-            filters['fft_params'] = {
-                'threshold': self.fft_threshold.get(),
-                'sampling_rate': 1000.0  # Default sampling rate
+        # Wavelet filter parameters
+        if self.use_wavelet.get():
+            filters['wavelet_params'] = {
+                'wavelet': self.wavelet_type.get(),
+                'level': self.wavelet_level.get(),
+                'threshold_mode': self.threshold_mode.get()
             }
-            if self.use_freq_band.get():
-                try:
-                    min_freq = float(self.min_freq.get())
-                    max_freq = float(self.max_freq.get())
-                    if min_freq >= 0 and max_freq > min_freq:
-                        filters['fft_params'].update({
-                            'min_freq': min_freq,
-                            'max_freq': max_freq
-                        })
-                    else:
-                        app_logger.warning("Invalid frequency range values, using default")
-                except ValueError:
-                    app_logger.warning("Invalid frequency range values, using default")
         
         # Butterworth filter parameters
         if self.use_butterworth.get():
@@ -226,6 +212,43 @@ class FilterTab:
         
         app_logger.debug(f"Active filters configuration: {filters}")
         return filters
+
+    def setup_wavelet_controls(self):
+        """Setup wavelet filter controls"""
+        wavelet_frame = ttk.LabelFrame(self.frame, text="Wavelet Filter")
+        wavelet_frame.pack(fill='x', padx=5, pady=5)
+        
+        # Enable checkbox
+        ttk.Checkbutton(wavelet_frame, text="Enable",
+                    variable=self.use_wavelet,
+                    command=self.on_filter_change).pack(pady=2)
+        
+        # Wavelet type selection
+        type_frame = ttk.Frame(wavelet_frame)
+        type_frame.pack(fill='x', padx=5, pady=2)
+        ttk.Label(type_frame, text="Wavelet Type:").pack(side='left')
+        wavelet_types = ['db4', 'sym4', 'coif3']
+        self.wavelet_type = ttk.Combobox(type_frame, values=wavelet_types, width=10)
+        self.wavelet_type.set('db4')
+        self.wavelet_type.pack(side='right')
+        
+        # Decomposition level
+        level_frame = ttk.Frame(wavelet_frame)
+        level_frame.pack(fill='x', padx=5, pady=2)
+        ttk.Label(level_frame, text="Level:").pack(side='left')
+        ttk.Scale(level_frame, from_=1, to=10, variable=self.wavelet_level,
+                orient='horizontal', command=lambda _: self.on_filter_change()
+                ).pack(side='left', fill='x', expand=True)
+        ttk.Label(level_frame, textvariable=self.wavelet_level).pack(side='right')
+        
+        # Threshold mode
+        mode_frame = ttk.Frame(wavelet_frame)
+        mode_frame.pack(fill='x', padx=5, pady=2)
+        ttk.Label(mode_frame, text="Threshold:").pack(side='left')
+        modes = ['soft', 'hard']
+        self.threshold_mode = ttk.Combobox(mode_frame, values=modes, width=10)
+        self.threshold_mode.set('soft')
+        self.threshold_mode.pack(side='right')
 
     def on_filter_change(self, *args):
         """Called when any filter parameter changes"""

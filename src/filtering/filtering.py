@@ -7,7 +7,8 @@ from scipy.signal import (
     sosfilt, 
     butter as butter_design
 )
-from scipy.fft import fft, ifft, fftfreq  
+from scipy.fft import fft, ifft, fftfreq
+from pywt import wavedec, waverec, threshold  
 from src.utils.logger import app_logger
 
 
@@ -40,7 +41,7 @@ def apply_savgol_filter(data, window_length=51, polyorder=3):
 
 def apply_fft_filter(data, threshold=0.2, min_freq=None, max_freq=None, sampling_rate=1000.0):
     """
-    Bulletproof FFT-based noise filtering.
+    Absolutely minimal FFT filter implementation.
     
     Args:
         data (np.array): Input signal data
@@ -53,44 +54,51 @@ def apply_fft_filter(data, threshold=0.2, min_freq=None, max_freq=None, sampling
         np.array: Filtered data
     """
     try:
-        # Ensure we have a numpy array
-        data = np.asarray(data)
+        # Convert to numpy array
+        signal = np.asarray(data)
+        n = len(signal)
         
-        # Perform FFT
-        spectrum = fft(data)
+        # Compute FFT
+        spectrum = fft(signal)
         
-        # Get magnitude spectrum
-        magnitude = np.abs(spectrum)
+        # Get frequencies
+        frequencies = fftfreq(n, d=1/sampling_rate)
         
-        # Create a mask based on magnitude threshold
-        threshold_value = threshold * np.max(magnitude)
-        mask = magnitude > threshold_value
+        # Create mask without any indexing or broadcasting
+        mask = np.ones(n, dtype=bool)
         
-        # Apply frequency band filter if specified
-        if min_freq is not None and max_freq is not None:
-            freqs = fftfreq(len(data), d=1/sampling_rate)
-            freq_mask = (np.abs(freqs) >= min_freq) & (np.abs(freqs) <= max_freq)
-            mask = mask & freq_mask
+        # Apply threshold to each component individually
+        for i in range(n):
+            if i == 0:  # DC component
+                continue
+                
+            # Check magnitude against threshold
+            if np.abs(spectrum[i]) < threshold * np.max(np.abs(spectrum)):
+                mask[i] = False
+            
+            # Apply frequency band if specified
+            if min_freq is not None and max_freq is not None:
+                if abs(frequencies[i]) < min_freq or abs(frequencies[i]) > max_freq:
+                    mask[i] = False
         
-        # Keep DC component
-        mask[0] = True
-        
-        # Apply filter by zeroing out unwanted frequencies
-        filtered_spectrum = spectrum.copy()
-        filtered_spectrum[~mask] = 0
+        # Apply filter directly
+        filtered_spectrum = np.zeros(n, dtype=complex)
+        for i in range(n):
+            if mask[i]:
+                filtered_spectrum[i] = spectrum[i]
         
         # Inverse FFT
-        filtered_data = np.real(ifft(filtered_spectrum))
+        filtered_signal = np.real(ifft(filtered_spectrum))
         
-        # Log retained components
+        # Log statistics
         retained = np.sum(mask) / len(mask) * 100
-        app_logger.info(f"FFT filter retained {retained:.1f}% of frequency components")
+        app_logger.info(f"FFT filter retained {retained:.1f}% of components")
         
-        return filtered_data
+        return filtered_signal
         
     except Exception as e:
-        app_logger.error(f"Error in FFT filter: {e}")
-        app_logger.error(f"Data shape: {data.shape if 'data' in locals() else 'N/A'}")
+        app_logger.error(f"Error in FFT filter: {str(e)}")
+        app_logger.error(f"Signal shape: {signal.shape if 'signal' in locals() else 'N/A'}")
         raise
 
 def butter_lowpass_filter(data, cutoff, fs=1000.0, order=5):
@@ -133,40 +141,44 @@ def butter_lowpass_filter(data, cutoff, fs=1000.0, order=5):
         app_logger.error(f"Error in Butterworth filter: {str(e)}")
         raise
 
-def combined_filter(data, savgol_params=None, fft_params=None, butter_params=None, 
+def combined_filter(data, savgol_params=None, wavelet_params=None, butter_params=None, 
                    extract_add_params=None):
     """
-    Apply multiple filters in sequence with improved FFT handling.
+    Apply multiple filters in sequence.
+    
+    Args:
+        data (np.array): Input signal data
+        savgol_params (dict): Parameters for Savitzky-Golay filter
+        wavelet_params (dict): Parameters for Wavelet filter
+        butter_params (dict): Parameters for Butterworth filter
+        extract_add_params (dict): Parameters for extract-add filter
+        
+    Returns:
+        np.array: Filtered data
     """
     app_logger.info("Starting combined filtering process")
-    filtered_data = np.asarray(data).copy()
+    filtered_data = np.array(data, copy=True)
     
     try:
+        # Apply Savitzky-Golay filter
         if savgol_params:
-            app_logger.debug("Applying Savitzky-Golay filter")
             filtered_data = apply_savgol_filter(
                 filtered_data,
                 window_length=savgol_params['window_length'],
                 polyorder=savgol_params['polyorder']
             )
         
-        if fft_params:
-            app_logger.debug("Applying FFT filter")
-            filter_params = {
-                'threshold': fft_params['threshold'],
-                'sampling_rate': fft_params.get('sampling_rate', 1000.0)
-            }
-            
-            # Add frequency band parameters if present
-            if fft_params.get('min_freq') is not None:
-                filter_params['min_freq'] = float(fft_params['min_freq'])
-            if fft_params.get('max_freq') is not None:
-                filter_params['max_freq'] = float(fft_params['max_freq'])
-                
-            filtered_data = apply_fft_filter(filtered_data, **filter_params)
+        # Apply Wavelet filter
+        if wavelet_params:
+            filtered_data = apply_wavelet_filter(
+                filtered_data,
+                wavelet=wavelet_params['wavelet'],
+                level=wavelet_params['level'],
+                threshold_mode=wavelet_params['threshold_mode']
+            )
         
+        # Apply Butterworth filter
         if butter_params:
-            app_logger.debug("Applying Butterworth filter")
             filtered_data = butter_lowpass_filter(
                 filtered_data,
                 cutoff=butter_params['cutoff'],
@@ -174,13 +186,13 @@ def combined_filter(data, savgol_params=None, fft_params=None, butter_params=Non
                 order=butter_params['order']
             )
         
+        # Apply Extract-Add filter
         if extract_add_params:
-            app_logger.debug("Applying Extract-Add filter")
             filtered_data = extract_add_filter(
                 filtered_data,
                 **extract_add_params
             )
-            
+        
         return filtered_data
         
     except Exception as e:
@@ -226,6 +238,61 @@ def calculate_filter_metrics(original_data, filtered_data):
     except Exception as e:
         app_logger.error(f"Error calculating filter metrics: {str(e)}")
         raise
+
+def apply_wavelet_filter(data, wavelet='db4', level=None, threshold_mode='soft'):
+    """
+    Apply wavelet-based denoising filter.
+    
+    Args:
+        data (np.array): Input signal data
+        wavelet (str): Wavelet type ('db4', 'sym4', or 'coif3' recommended for biological signals)
+        level (int): Decomposition level (None for automatic)
+        threshold_mode (str): 'soft' or 'hard' thresholding
+        
+    Returns:
+        np.array: Filtered data
+    """
+    try:
+        # Convert to numpy array
+        data = np.asarray(data, dtype=np.float64)
+        
+        # Automatically determine level if not specified
+        if level is None:
+            level = min(int(np.log2(len(data))), 10)
+        
+        # Decompose signal into wavelet coefficients
+        coeffs = wavedec(data, wavelet, level=level)
+        
+        # Calculate noise estimate from finest level
+        noise_sigma = mad(coeffs[-1]) / 0.6745
+        
+        # Calculate threshold
+        threshold_value = noise_sigma * np.sqrt(2 * np.log(len(data)))
+        
+        # Process each coefficient level
+        for i in range(1, len(coeffs)):  # Skip approximation coefficients
+            coeffs[i] = threshold(coeffs[i], threshold_value, mode=threshold_mode)
+        
+        # Reconstruct signal
+        filtered_data = waverec(coeffs, wavelet)
+        
+        # Ensure output length matches input
+        if len(filtered_data) > len(data):
+            filtered_data = filtered_data[:len(data)]
+        elif len(filtered_data) < len(data):
+            filtered_data = np.pad(filtered_data, (0, len(data) - len(filtered_data)))
+        
+        app_logger.info(f"Wavelet filter applied: level={level}, wavelet={wavelet}")
+        return filtered_data
+        
+    except Exception as e:
+        app_logger.error(f"Error in wavelet filter: {str(e)}")
+        raise
+
+def mad(data):
+    """Calculate Median Absolute Deviation"""
+    median = np.median(data)
+    return np.median(np.abs(data - median))
 
 
 def adaptive_threshold_filter(data, window_size=50):
