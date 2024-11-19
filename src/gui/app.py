@@ -8,8 +8,10 @@ from src.utils.logger import app_logger
 from src.gui.filter_tab import FilterTab
 from src.gui.analysis_tab import AnalysisTab
 from src.gui.view_tab import ViewTab
+from src.gui.action_potential_tab import ActionPotentialTab  # New import
 from src.io_utils.io_utils import ATFHandler
 from src.filtering.filtering import combined_filter
+from src.analysis.action_potential import ActionPotentialProcessor  # New import
 
 class SignalAnalyzerApp:
     def __init__(self, master):
@@ -21,6 +23,7 @@ class SignalAnalyzerApp:
         self.time_data = None
         self.filtered_data = None
         self.current_filters = {}
+        self.action_potential_processor = None  # New variable
         
         # Create main container
         self.setup_main_layout()
@@ -91,11 +94,13 @@ class SignalAnalyzerApp:
         self.filter_tab = FilterTab(self.notebook, self.on_filter_change)
         self.analysis_tab = AnalysisTab(self.notebook, self.on_analysis_update)
         self.view_tab = ViewTab(self.notebook, self.on_view_change)
+        self.action_potential_tab = ActionPotentialTab(self.notebook, self.on_action_potential_analysis)  # New tab
         
         # Add tabs to notebook
         self.notebook.add(self.filter_tab.frame, text='Filters')
         self.notebook.add(self.analysis_tab.frame, text='Analysis')
         self.notebook.add(self.view_tab.frame, text='View')
+        self.notebook.add(self.action_potential_tab.frame, text='Action Potential')  # New tab
 
     def load_data(self):
         """Load data from file"""
@@ -133,6 +138,9 @@ class SignalAnalyzerApp:
             # Update analysis
             self.analysis_tab.update_data(self.data, self.time_data)
             
+            # Reset action potential processor
+            self.action_potential_processor = None
+            
             app_logger.info("Data loaded successfully")
             
         except Exception as e:
@@ -155,6 +163,9 @@ class SignalAnalyzerApp:
             self.update_plot()
             self.analysis_tab.update_filtered_data(self.filtered_data)
             
+            # Reset action potential processor when filters change
+            self.action_potential_processor = None
+            
         except Exception as e:
             app_logger.error(f"Error applying filters: {str(e)}")
             messagebox.showerror("Error", f"Failed to apply filters: {str(e)}")
@@ -173,6 +184,78 @@ class SignalAnalyzerApp:
             )
         except Exception as e:
             app_logger.error(f"Error updating analysis: {str(e)}")
+
+    def on_action_potential_analysis(self, params):
+        """Handle action potential analysis"""
+        if self.filtered_data is None:
+            messagebox.showwarning("Analysis", "No filtered data available")
+            return
+            
+        try:
+            # Create or update processor instance
+            self.action_potential_processor = ActionPotentialProcessor(
+                self.filtered_data,
+                self.time_data,
+                params
+            )
+            
+            # Process signal
+            processed_data, processed_time, integral = self.action_potential_processor.process_signal()
+            
+            # Store the processed data and time
+            self.processed_data = processed_data
+            self.processed_time = processed_time
+            
+            # Update plot with processed data
+            self.update_plot_with_processed_data(processed_data, processed_time)
+            
+            # Update results display
+            self.action_potential_tab.update_results(integral)
+            
+            app_logger.info("Action potential analysis completed successfully")
+            
+        except Exception as e:
+            app_logger.error(f"Error in action potential analysis: {str(e)}")
+            messagebox.showerror("Error", f"Analysis failed: {str(e)}")
+
+    def update_plot_with_processed_data(self, processed_data, processed_time):
+        """Update plot with processed data ensuring time alignment"""
+        try:
+            self.ax.clear()
+            
+            # Get view parameters
+            view_params = self.view_tab.get_view_params()
+            
+            # Plot original data with transparency
+            if view_params.get('show_original', True):
+                self.ax.plot(self.time_data, self.data, 'b-', 
+                           label='Original Signal', alpha=0.3)
+            
+            # Plot filtered data
+            if view_params.get('show_filtered', True):
+                self.ax.plot(self.time_data, self.filtered_data, 'r-', 
+                           label='Filtered Signal', alpha=0.5)
+            
+            # Plot processed data
+            self.ax.plot(processed_time, processed_data, 'g-', 
+                        label='Processed Signal', linewidth=2)
+            
+            # Set labels and grid
+            self.ax.set_xlabel('Time (s)')
+            self.ax.set_ylabel('Current (pA)')
+            self.ax.grid(True)
+            self.ax.legend()
+            
+            # Update axis limits if specified
+            if 'y_min' in view_params and 'y_max' in view_params:
+                self.ax.set_ylim(view_params['y_min'], view_params['y_max'])
+            
+            self.fig.tight_layout()
+            self.canvas.draw_idle()
+            
+        except Exception as e:
+            app_logger.error(f"Error updating plot with processed data: {str(e)}")
+            raise
 
     def on_view_change(self, view_params):
         """Handle changes in view settings"""
@@ -253,6 +336,11 @@ class SignalAnalyzerApp:
                     'Original': self.data,
                     'Filtered': self.filtered_data
                 })
+                
+                # Add action potential analysis results if available
+                if self.action_potential_processor is not None:
+                    df['Processed'] = self.filtered_data
+                
                 df.to_csv(filepath, index=False)
                 
                 app_logger.info(f"Data exported to {filepath}")
@@ -282,3 +370,13 @@ class SignalAnalyzerApp:
         except Exception as e:
             app_logger.error(f"Error exporting figure: {str(e)}")
             messagebox.showerror("Error", f"Failed to export figure: {str(e)}")
+
+# Only add this if it's in the main script file
+if __name__ == "__main__":
+    try:
+        root = tk.Tk()
+        app = SignalAnalyzerApp(root)
+        root.mainloop()
+    except Exception as e:
+        app_logger.critical(f"Application crashed: {str(e)}")
+        raise
