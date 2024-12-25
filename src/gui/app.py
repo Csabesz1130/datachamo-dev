@@ -185,38 +185,64 @@ class SignalAnalyzerApp:
         except Exception as e:
             app_logger.error(f"Error updating analysis: {str(e)}")
 
-    def on_action_potential_analysis(self, params):
-        """Handle action potential analysis"""
-        if self.filtered_data is None:
-            messagebox.showwarning("Analysis", "No filtered data available")
-            return
-            
+    def plot_action_potential(self, processed_data, time_data):
+        """Plot action potential analysis results."""
         try:
-            # Create or update processor instance
-            self.action_potential_processor = ActionPotentialProcessor(
-                self.filtered_data,
-                self.time_data,
-                params
-            )
+            if processed_data is None:
+                return
+                
+            self.ax.clear()
             
-            # Process signal
-            processed_data, processed_time, integral = self.action_potential_processor.process_signal()
+            # Plot original signal with transparency
+            self.ax.plot(self.time_data, self.data, 'b-', alpha=0.3, label='Original')
             
-            # Store the processed data and time
-            self.processed_data = processed_data
-            self.processed_time = processed_time
+            # Plot filtered signal
+            if self.filtered_data is not None:
+                self.ax.plot(self.time_data, self.filtered_data, 'r-', alpha=0.5, label='Filtered')
             
-            # Update plot with processed data
-            self.update_plot_with_processed_data(processed_data, processed_time)
+            # Plot processed data
+            self.ax.plot(time_data, processed_data, 'g-', linewidth=2, label='Processed')
             
-            # Update results display
-            self.action_potential_tab.update_results(integral)
+            # Set labels and grid
+            self.ax.set_xlabel('Time (s)')
+            self.ax.set_ylabel('Current (pA)')
+            self.ax.grid(True)
+            self.ax.legend()
             
-            app_logger.info("Action potential analysis completed successfully")
+            # Update display
+            self.fig.tight_layout()
+            self.canvas.draw_idle()
             
         except Exception as e:
+            app_logger.error(f"Error plotting action potential: {str(e)}")
+            raise
+
+    def on_action_potential_analysis(self, params):
+        """Handle action potential analysis and return results."""
+        try:
+            if self.filtered_data is None:
+                messagebox.showwarning("Analysis", "No filtered data available")
+                return None
+
+            # Create processor with current data
+            processor = ActionPotentialProcessor(self.filtered_data, self.time_data, params)
+            
+            # Process signal and get results
+            processed_data, time_data, results = processor.process_signal()
+            
+            # Update plot if successful
+            if processed_data is not None and results:
+                self.plot_action_potential(processed_data, time_data)
+                app_logger.info("Action potential analysis completed successfully")
+                
+                # Return the results dictionary for UI update
+                return results
+                
+            return None
+                
+        except Exception as e:
             app_logger.error(f"Error in action potential analysis: {str(e)}")
-            messagebox.showerror("Error", f"Analysis failed: {str(e)}")
+            raise
 
     def update_plot_with_processed_data(self, processed_data, processed_time):
         """Update plot with processed data ensuring time alignment"""
