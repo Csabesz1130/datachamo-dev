@@ -492,35 +492,34 @@ class ActionPotentialTab:
             messagebox.showerror("Analysis Error", str(e))
 
     def update_results(self, results):
-        """Update displayed results with width-constrained formatting."""
+        """Update displayed results with compact formatting."""
         try:
             if not results:
                 self.integral_value.set("No analysis results")
                 self.status_text.set("Analysis produced no results")
                 return
 
-            # Format main results
+            # Format with shorter labels and reduced precision
             display_text = [
                 "Analysis Results",
-                "-----------------",
-                f"{'Integral:':<12} {results['integral_value']}",
-                f"{'Capacitance:':<12} {results['capacitance_uF_cm2']}",
+                "---------------",
+                f"{'Integral:':<10} {float(results['integral_value'].split()[0]):.1e} C",
+                f"{'Capacitance:':<10} {float(results['capacitance_uF_cm2'].split()[0]):.4f} µF",
                 "",
                 "Raw Values",
-                "-----------------"
+                "---------------"
             ]
             
-            # Add raw values with shorter width
+            # Format raw values with minimal precision
             if 'raw_values' in results:
                 raw = results['raw_values']
                 display_text.extend([
-                    # Use shorter format for scientific notation
-                    f"{'Charge:':<12} {raw['charge_C']:.1e} C",
-                    f"{'Capacitance:':<12} {raw['capacitance_F']:.1e} F",
-                    f"{'Cell Area:':<12} {raw['area_cm2']:.1e} cm²"
+                    f"{'Charge:':<10} {raw['charge_C']:.1e} C",
+                    f"{'Cap.:':<10} {raw['capacitance_F']:.1e} F",
+                    f"{'Area:':<10} {raw['area_cm2']:.1e} cm²"
                 ])
             
-            # Join with newlines and set
+            # Join and display
             self.integral_value.set('\n'.join(display_text))
             self.status_text.set("Analysis complete")
             
