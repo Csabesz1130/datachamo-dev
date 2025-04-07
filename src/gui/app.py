@@ -13,6 +13,8 @@ from src.gui.action_potential_tab import ActionPotentialTab
 from src.io_utils.io_utils import ATFHandler
 from src.filtering.filtering import combined_filter
 from src.analysis.action_potential import ActionPotentialProcessor
+import os, time
+print(f"app.py last modified: {time.ctime(os.path.getmtime(__file__))}")
 
 class SignalAnalyzerApp:
     def __init__(self, master):

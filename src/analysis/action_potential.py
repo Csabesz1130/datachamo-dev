@@ -35,6 +35,11 @@ class ActionPotentialProcessor:
         # Status bar
         self.status_callback = None
         
+        # Initialize attributes for curves and slices
+        self.orange_curve = None
+        self._hyperpol_slice = None  # Initialize slice attribute
+        self._depol_slice = None    # Initialize slice attribute
+        
         app_logger.debug("Action potential processor initialized")
 
     def set_data(self, data, time_data):
@@ -54,29 +59,62 @@ class ActionPotentialProcessor:
 
     def analyze(self, **params):
         """Perform action potential analysis"""
+        app_logger.info("Starting Action Potential Analysis...")
         try:
             # Update parameters
             self.params.update(params)
+            app_logger.debug(f"Analysis using parameters: {self.params}")
             
-            # Process signal
+            # --- Signal Processing Steps ---
+            app_logger.debug("Step 1: Baseline Correction")
             self.baseline_correction()
-            self.find_cycles()
-            self.normalize_signal()
             
-            # Calculate derived curves
-            self.calculate_blue_curve()
+            app_logger.debug("Step 2: Finding Cycles (if applicable)")
+            self.find_cycles() # Note: This might be deprecated by the new method
+            
+            app_logger.debug("Step 3: Normalizing Signal (if cycles found)")
+            self.normalize_signal() # Note: Depends on cycles
+            
+            # Check if processed_data exists after initial steps
+            if self.processed_data is None:
+                app_logger.error("processed_data is None after baseline correction. Cannot proceed.")
+                raise ValueError("Baseline correction failed to produce data.")
+                
+            # --- Alternative Method Logic (if applicable) ---
+            # Assuming the orange/blue/magenta/purple logic replaces or supplements find_cycles/normalize_signal
+            # Let's ensure the main derived curves are calculated regardless
+            app_logger.debug("Step 4: Calculating Derived Curves")
+            self.calculate_orange_curve_logic() # Assuming this handles orange curve creation
+            self.calculate_blue_curve()         # Ensure these use self.processed_data
             self.calculate_magenta_curve()
-            self.calculate_purple_curves()
+            self.calculate_purple_curves()    # This should now correctly store slices if data is sufficient
             
-            # Calculate results
-            results = self.calculate_integral()
+            # --- Results Calculation ---
+            app_logger.debug("Step 5: Calculating Integral (if cycles found)")
+            results = self.calculate_integral() # Depends on cycles found earlier
+            
+            # --- Final Logging and Return ---
+            app_logger.debug("Step 6: Logging Curve Details")
+            self.log_curve_details() # *** Ensure this call exists ***
             
             app_logger.info("Analysis completed successfully")
-            return self.processed_data
+            # Return a dictionary containing all relevant data for plotting/tracking
+            # It's better to return the curves explicitly than just processed_data
+            return {
+                'orange': self.orange_curve,
+                'blue': self.blue_curve,
+                'magenta': self.magenta_curve,
+                'purple_hyperpol': self.purple_hyperpol_curve,
+                'purple_depol': self.purple_depol_curve,
+                'time': self.time_data,
+                'processed': self.processed_data, 
+                'integral_info': results 
+            }
             
         except Exception as e:
-            app_logger.error(f"Error in analysis: {str(e)}")
-            raise
+            app_logger.error(f"Error during analysis: {str(e)}", exc_info=True)
+            # Optionally return None or empty data structure on error
+            return None 
 
     def baseline_correction(self):
         """Apply baseline correction"""
@@ -141,15 +179,39 @@ class ActionPotentialProcessor:
             app_logger.debug("Magenta curve calculated")
 
     def calculate_purple_curves(self):
-        """Calculate modified peak curves"""
-        if not self.processed_data is None:
-            # Hyperpolarization curve (points 1028-1227)
-            self.purple_hyperpol_curve = self.processed_data[1028:1227]
-            
-            # Depolarization curve (points 828-1028)
-            self.purple_depol_curve = self.processed_data[828:1028]
-            
-            app_logger.debug("Purple curves calculated")
+        """Calculate modified peak curves and store slices"""
+        app_logger.debug(f"Attempting to calculate purple curves...")
+        if self.processed_data is not None:
+            data_len = len(self.processed_data)
+            app_logger.debug(f"Length of processed_data: {data_len}")
+            # Check if data is long enough for the standard slices
+            if data_len > 1227: 
+                # Define and store slices based on fixed indices
+                self._depol_slice = (828, 1028) 
+                self._hyperpol_slice = (1028, 1227)
+                app_logger.info(f"Sufficient data length ({data_len}). Setting fixed slices: Depol={self._depol_slice}, Hyperpol={self._hyperpol_slice}")
+                
+                # Hyperpolarization curve
+                self.purple_hyperpol_curve = self.processed_data[self._hyperpol_slice[0]:self._hyperpol_slice[1]]
+                
+                # Depolarization curve
+                self.purple_depol_curve = self.processed_data[self._depol_slice[0]:self._depol_slice[1]]
+                
+                app_logger.info(f"Purple curves calculated from fixed slices.")
+            else:
+                # Data too short for fixed slices, set everything to None
+                app_logger.warning(f"Processed data length ({data_len}) is too short for fixed purple curve slices (needs > 1227). Setting purple curves and slices to None.")
+                self.purple_hyperpol_curve = None
+                self.purple_depol_curve = None
+                self._hyperpol_slice = None
+                self._depol_slice = None
+        else:
+            # Processed data is None
+            app_logger.warning("Cannot calculate purple curves because processed_data is None.")
+            self.purple_hyperpol_curve = None
+            self.purple_depol_curve = None
+            self._hyperpol_slice = None
+            self._depol_slice = None
 
     def calculate_integral(self):
         """Calculate integral and capacitance"""
@@ -207,3 +269,21 @@ class ActionPotentialProcessor:
         except Exception as e:
             app_logger.error(f"Error calculating regression: {str(e)}")
             return None
+
+    def log_curve_details(self):
+        """Log details about calculated curves and slices."""
+        app_logger.info("--- Curve Calculation Summary ---")
+        app_logger.info(f"Orange curve points: {len(self.orange_curve) if self.orange_curve is not None else 'N/A'}")
+        app_logger.info(f"Blue curve points: {len(self.blue_curve) if self.blue_curve is not None else 'N/A'}")
+        app_logger.info(f"Magenta curve points: {len(self.magenta_curve) if self.magenta_curve is not None else 'N/A'}")
+        app_logger.info(f"Purple Hyperpol points: {len(self.purple_hyperpol_curve) if self.purple_hyperpol_curve is not None else 'N/A'}")
+        app_logger.info(f"Purple Depol points: {len(self.purple_depol_curve) if self.purple_depol_curve is not None else 'N/A'}")
+        if hasattr(self, '_hyperpol_slice') and self._hyperpol_slice:
+            app_logger.info(f"Stored Hyperpol Slice: {self._hyperpol_slice}")
+        else:
+            app_logger.info("Hyperpol Slice: Not stored or unavailable.")
+        if hasattr(self, '_depol_slice') and self._depol_slice:
+             app_logger.info(f"Stored Depol Slice: {self._depol_slice}")
+        else:
+             app_logger.info("Depol Slice: Not stored or unavailable.")
+        app_logger.info("-------------------------------")
