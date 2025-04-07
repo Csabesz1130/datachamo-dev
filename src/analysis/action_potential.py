@@ -1,13 +1,15 @@
 import numpy as np
 from scipy import signal
 from scipy.integrate import simps
+from scipy.stats import linregress
 from src.utils.logger import app_logger
 
 class ActionPotentialProcessor:
-    def __init__(self, data, time_data, params=None):
-        self.data = np.array(data)  # Should be in pA
-        self.time_data = np.array(time_data)  # Should be in seconds
-        self.params = params or {
+    def __init__(self):
+        """Initialize the action potential processor"""
+        self.data = None
+        self.time_data = None
+        self.params = {
             'n_cycles': 2,
             't1': 100,  # ms
             't2': 100,  # ms
@@ -17,21 +19,74 @@ class ActionPotentialProcessor:
             'cell_area_cm2': 1.0  # Default membrane area in cm²
         }
         
+        # Processed data
         self.processed_data = None
         self.baseline = None
         self.cycles = []
         self.cycle_times = []
         self.cycle_indices = []
         
-        app_logger.debug(f"Parameters validated: {self.params}")
+        # Derived curves
+        self.blue_curve = None
+        self.magenta_curve = None
+        self.purple_hyperpol_curve = None
+        self.purple_depol_curve = None
+        
+        # Status bar
+        self.status_callback = None
+        
+        app_logger.debug("Action potential processor initialized")
+
+    def set_data(self, data, time_data):
+        """Set input data"""
+        self.data = np.array(data)
+        self.time_data = np.array(time_data)
+        app_logger.debug("Input data set")
+
+    def set_status_callback(self, callback):
+        """Set status bar update callback"""
+        self.status_callback = callback
+
+    def update_status(self, text):
+        """Update status bar text"""
+        if self.status_callback:
+            self.status_callback(text)
+
+    def analyze(self, **params):
+        """Perform action potential analysis"""
+        try:
+            # Update parameters
+            self.params.update(params)
+            
+            # Process signal
+            self.baseline_correction()
+            self.find_cycles()
+            self.normalize_signal()
+            
+            # Calculate derived curves
+            self.calculate_blue_curve()
+            self.calculate_magenta_curve()
+            self.calculate_purple_curves()
+            
+            # Calculate results
+            results = self.calculate_integral()
+            
+            app_logger.info("Analysis completed successfully")
+            return self.processed_data
+            
+        except Exception as e:
+            app_logger.error(f"Error in analysis: {str(e)}")
+            raise
 
     def baseline_correction(self):
+        """Apply baseline correction"""
         baseline_window = self.data[:1000]
         self.baseline = np.median(baseline_window)
         self.processed_data = self.data - self.baseline
         app_logger.info(f"Baseline correction applied: {self.baseline:.2f}")
 
     def find_cycles(self):
+        """Find action potential cycles"""
         sampling_rate = 1.0 / np.mean(np.diff(self.time_data))
         t1_samples = int(self.params['t1'] * sampling_rate / 1000)
         
@@ -53,6 +108,7 @@ class ActionPotentialProcessor:
             app_logger.debug(f"Valid cycle found at index {peak}")
 
     def normalize_signal(self):
+        """Normalize signal to voltage range"""
         if not self.cycles:
             return
             
@@ -70,91 +126,84 @@ class ActionPotentialProcessor:
         
         app_logger.info(f"Signal normalized with scale factor: {scale_factor:.4f}")
 
-    def process_signal(self):
-        """Process the signal and return results."""
-        try:
-            self.baseline_correction()
-            self.find_cycles()
-            self.normalize_signal()
-            results = self.calculate_integral()
+    def calculate_blue_curve(self):
+        """Calculate voltage-normalized curve"""
+        if not self.processed_data is None:
+            # Take points 28-827 (800 points)
+            self.blue_curve = self.processed_data[28:828]
+            app_logger.debug("Blue curve calculated")
+
+    def calculate_magenta_curve(self):
+        """Calculate averaged normalized curve"""
+        if not self.blue_curve is None:
+            # Take points 28-228 (200 points) and average
+            self.magenta_curve = np.mean(self.blue_curve[:200])
+            app_logger.debug("Magenta curve calculated")
+
+    def calculate_purple_curves(self):
+        """Calculate modified peak curves"""
+        if not self.processed_data is None:
+            # Hyperpolarization curve (points 1028-1227)
+            self.purple_hyperpol_curve = self.processed_data[1028:1227]
             
-            if not results:
-                return None, None, {
-                    'integral_value': 'No analysis performed',
-                    'capacitance_uF_cm2': 'No analysis performed',
+            # Depolarization curve (points 828-1028)
+            self.purple_depol_curve = self.processed_data[828:1028]
+            
+            app_logger.debug("Purple curves calculated")
+
+    def calculate_integral(self):
+        """Calculate integral and capacitance"""
+        try:
+            if not self.cycles:
+                return {
+                    'integral_value': 'No cycles found',
+                    'capacitance_uF_cm2': 'No cycles found',
                     'cycle_indices': []
                 }
                 
-            return self.processed_data, self.time_data, results
+            # Calculate integral for each cycle
+            integrals = []
+            for cycle, cycle_time in zip(self.cycles, self.cycle_times):
+                integral = simps(cycle, cycle_time)
+                integrals.append(integral)
+                
+            # Calculate average integral
+            avg_integral = np.mean(integrals)
+            
+            # Calculate capacitance
+            capacitance = avg_integral / (self.params['V1'] - self.params['V0'])
+            capacitance_per_area = capacitance / self.params['cell_area_cm2']
+            
+            return {
+                'integral_value': f"{avg_integral:.2f} pA·ms",
+                'capacitance_uF_cm2': f"{capacitance_per_area:.2f} μF/cm²",
+                'cycle_indices': self.cycle_indices
+            }
             
         except Exception as e:
-            app_logger.error(f"Error in signal processing: {str(e)}")
-            return None, None, {
+            app_logger.error(f"Error calculating integral: {str(e)}")
+            return {
                 'integral_value': f'Error: {str(e)}',
                 'capacitance_uF_cm2': 'Error',
                 'cycle_indices': []
             }
 
-    def calculate_integral(self):
-        """Calculate integral and capacitance with proper unit handling."""
+    def get_regression_line(self, start_idx, end_idx):
+        """Calculate regression line for given range"""
         try:
-            if not self.cycles:
-                return {
-                    'integral_value': 'No cycles found',
-                    'capacitance_uF_cm2': '0.0000 µF/cm²',
-                    'cycle_indices': []
-                }
-
-            # Get first cycle
-            cycle = self.cycles[0]
-            cycle_time = self.cycle_times[0]
-
-            # Unit conversions
-            current_in_A = cycle * 1e-12  # pA to A
-            time_in_s = cycle_time  # Already in seconds from data loading
-            voltage_diff_in_V = (self.params['V1'] - self.params['V0']) * 1e-3  # mV to V
-
-            # Find event window using appropriate threshold
-            peak_current = np.max(np.abs(current_in_A))
-            threshold = 0.1 * peak_current  # 10% of peak
-            event_mask = np.abs(current_in_A) > threshold
-
-            if not np.any(event_mask):
-                return {
-                    'integral_value': '0.0000 C',
-                    'capacitance_uF_cm2': '0.0000 µF/cm²',
-                    'cycle_indices': self.cycle_indices
-                }
-
-            # Calculate charge
-            charge_C = np.trapz(current_in_A[event_mask], time_in_s[event_mask])
+            x = self.time_data[start_idx:end_idx]
+            y = self.processed_data[start_idx:end_idx]
             
-            # Calculate capacitance
-            total_capacitance_F = abs(charge_C / voltage_diff_in_V)
-            total_capacitance_uF = total_capacitance_F * 1e6  # Convert F to µF
-
-            # Use realistic cell area (typical patch size ~100 µm²)
-            area_cm2 = self.params.get('cell_area_cm2', 1e-4)  # 100 µm² = 1e-4 cm²
-            capacitance_uF_cm2 = total_capacitance_uF / area_cm2
-
-            results = {
-                'integral_value': f"{abs(charge_C):.6e} C",
-                'capacitance_uF_cm2': f"{capacitance_uF_cm2:.4f} µF/cm²",
-                'cycle_indices': self.cycle_indices,
-                'raw_values': {
-                    'charge_C': charge_C,
-                    'capacitance_F': total_capacitance_F,
-                    'area_cm2': area_cm2
-                }
-            }
-
-            app_logger.info(f"Integrated charge: {charge_C:.2e} C, Capacitance: {capacitance_uF_cm2:.4f} µF/cm²")
-            return results
-
-        except Exception as e:
-            app_logger.error(f"Error calculating integral: {str(e)}")
+            slope, intercept, r_value, p_value, std_err = linregress(x, y)
+            
             return {
-                'integral_value': 'Error in calculation',
-                'capacitance_uF_cm2': 'Error',
-                'cycle_indices': self.cycle_indices
+                'slope': slope,
+                'intercept': intercept,
+                'r_squared': r_value**2,
+                'x': x,
+                'y': slope * x + intercept
             }
+            
+        except Exception as e:
+            app_logger.error(f"Error calculating regression: {str(e)}")
+            return None

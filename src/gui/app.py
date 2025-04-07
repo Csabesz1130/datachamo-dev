@@ -5,13 +5,14 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 import numpy as np
 import pandas as pd
 from src.utils.logger import app_logger
+from src.utils.point_counter import CurvePointTracker
 from src.gui.filter_tab import FilterTab
 from src.gui.analysis_tab import AnalysisTab
 from src.gui.view_tab import ViewTab
-from src.gui.action_potential_tab import ActionPotentialTab  # New import
+from src.gui.action_potential_tab import ActionPotentialTab
 from src.io_utils.io_utils import ATFHandler
 from src.filtering.filtering import combined_filter
-from src.analysis.action_potential import ActionPotentialProcessor  # New import
+from src.analysis.action_potential import ActionPotentialProcessor
 
 class SignalAnalyzerApp:
     def __init__(self, master):
@@ -23,7 +24,8 @@ class SignalAnalyzerApp:
         self.time_data = None
         self.filtered_data = None
         self.current_filters = {}
-        self.action_potential_processor = None  # New variable
+        self.action_potential_processor = None
+        self.point_tracker = None
         
         # Create main container
         self.setup_main_layout()
@@ -83,6 +85,11 @@ class SignalAnalyzerApp:
         # Add navigation toolbar
         self.toolbar = NavigationToolbar2Tk(self.canvas, self.plot_frame)
         self.toolbar.update()
+        
+        # Initialize point tracker with axes
+        self.point_tracker = CurvePointTracker(self.ax)
+        self.point_tracker.show_annotations = False
+        app_logger.info("Point tracker initialized with axes")
 
     def setup_tabs(self):
         """Setup the control tabs"""
@@ -94,13 +101,13 @@ class SignalAnalyzerApp:
         self.filter_tab = FilterTab(self.notebook, self.on_filter_change)
         self.analysis_tab = AnalysisTab(self.notebook, self.on_analysis_update)
         self.view_tab = ViewTab(self.notebook, self.on_view_change)
-        self.action_potential_tab = ActionPotentialTab(self.notebook, self.on_action_potential_analysis)  # New tab
+        self.action_potential_tab = ActionPotentialTab(self.notebook, self.on_action_potential_analysis)
         
         # Add tabs to notebook
         self.notebook.add(self.filter_tab.frame, text='Filters')
         self.notebook.add(self.analysis_tab.frame, text='Analysis')
         self.notebook.add(self.view_tab.frame, text='View')
-        self.notebook.add(self.action_potential_tab.frame, text='Action Potential')  # New tab
+        self.notebook.add(self.action_potential_tab.frame, text='Action Potential')
 
     def load_data(self):
         """Load data from file"""
@@ -185,103 +192,72 @@ class SignalAnalyzerApp:
         except Exception as e:
             app_logger.error(f"Error updating analysis: {str(e)}")
 
-    def plot_action_potential(self, processed_data, time_data):
-        """Plot action potential analysis results."""
-        try:
-            if processed_data is None:
-                return
-                
-            self.ax.clear()
-            
-            # Plot original signal with transparency
-            self.ax.plot(self.time_data, self.data, 'b-', alpha=0.3, label='Original')
-            
-            # Plot filtered signal
-            if self.filtered_data is not None:
-                self.ax.plot(self.time_data, self.filtered_data, 'r-', alpha=0.5, label='Filtered')
-            
-            # Plot processed data
-            self.ax.plot(time_data, processed_data, 'g-', linewidth=2, label='Processed')
-            
-            # Set labels and grid
-            self.ax.set_xlabel('Time (s)')
-            self.ax.set_ylabel('Current (pA)')
-            self.ax.grid(True)
-            self.ax.legend()
-            
-            # Update display
-            self.fig.tight_layout()
-            self.canvas.draw_idle()
-            
-        except Exception as e:
-            app_logger.error(f"Error plotting action potential: {str(e)}")
-            raise
-
     def on_action_potential_analysis(self, params):
-        """Handle action potential analysis and return results."""
+        """Handle action potential analysis"""
         try:
             if self.filtered_data is None:
-                messagebox.showwarning("Analysis", "No filtered data available")
-                return None
-
-            # Create processor with current data
-            processor = ActionPotentialProcessor(self.filtered_data, self.time_data, params)
+                messagebox.showerror("Error", "No data available for analysis")
+                return
+                
+            # Create processor if needed
+            if self.action_potential_processor is None:
+                self.action_potential_processor = ActionPotentialProcessor()
             
-            # Process signal and get results
-            processed_data, time_data, results = processor.process_signal()
+            # Update processor with current data
+            self.action_potential_processor.set_data(self.filtered_data, self.time_data)
             
-            # Update plot if successful
-            if processed_data is not None and results:
-                self.plot_action_potential(processed_data, time_data)
-                app_logger.info("Action potential analysis completed successfully")
-                
-                # Return the results dictionary for UI update
-                return results
-                
-            return None
-                
+            # Perform analysis
+            processed_data = self.action_potential_processor.analyze(**params)
+            
+            # Initialize or update point tracker
+            if self.point_tracker is None:
+                self.point_tracker = CurvePointTracker(self.ax)
+            
+            # Update processor and enable tracking
+            self.point_tracker.processor = self.action_potential_processor
+            self.point_tracker._show_annotations = True
+            
+            # Update plot
+            self.update_plot_with_processed_data(processed_data, self.time_data)
+            
+            app_logger.info("Action potential analysis completed successfully")
+            
         except Exception as e:
             app_logger.error(f"Error in action potential analysis: {str(e)}")
-            raise
+            messagebox.showerror("Error", f"Analysis failed: {str(e)}")
 
     def update_plot_with_processed_data(self, processed_data, processed_time):
-        """Update plot with processed data ensuring time alignment"""
-        try:
-            self.ax.clear()
+        """Update plot with processed data"""
+        self.ax.clear()
+        
+        # Plot processed data
+        self.ax.plot(processed_time, processed_data, 'orange', label='Processed')
+        
+        # Plot additional curves if available
+        if hasattr(self.action_potential_processor, 'blue_curve'):
+            self.ax.plot(processed_time, self.action_potential_processor.blue_curve, 
+                        'blue', label='Voltage-Normalized')
             
-            # Get view parameters
-            view_params = self.view_tab.get_view_params()
+        if hasattr(self.action_potential_processor, 'magenta_curve'):
+            self.ax.plot(processed_time, self.action_potential_processor.magenta_curve,
+                        'magenta', label='Averaged Normalized')
             
-            # Plot original data with transparency
-            if view_params.get('show_original', True):
-                self.ax.plot(self.time_data, self.data, 'b-', 
-                           label='Original Signal', alpha=0.3)
+        if hasattr(self.action_potential_processor, 'purple_hyperpol_curve'):
+            self.ax.plot(processed_time, self.action_potential_processor.purple_hyperpol_curve,
+                        'purple', label='Hyperpolarization')
             
-            # Plot filtered data
-            if view_params.get('show_filtered', True):
-                self.ax.plot(self.time_data, self.filtered_data, 'r-', 
-                           label='Filtered Signal', alpha=0.5)
-            
-            # Plot processed data
-            self.ax.plot(processed_time, processed_data, 'g-', 
-                        label='Processed Signal', linewidth=2)
-            
-            # Set labels and grid
-            self.ax.set_xlabel('Time (s)')
-            self.ax.set_ylabel('Current (pA)')
-            self.ax.grid(True)
-            self.ax.legend()
-            
-            # Update axis limits if specified
-            if 'y_min' in view_params and 'y_max' in view_params:
-                self.ax.set_ylim(view_params['y_min'], view_params['y_max'])
-            
-            self.fig.tight_layout()
-            self.canvas.draw_idle()
-            
-        except Exception as e:
-            app_logger.error(f"Error updating plot with processed data: {str(e)}")
-            raise
+        if hasattr(self.action_potential_processor, 'purple_depol_curve'):
+            self.ax.plot(processed_time, self.action_potential_processor.purple_depol_curve,
+                        'purple', label='Depolarization')
+        
+        # Update plot settings
+        self.ax.set_xlabel('Time (ms)')
+        self.ax.set_ylabel('Current (pA)')
+        self.ax.legend()
+        self.ax.grid(True)
+        
+        # Redraw canvas
+        self.canvas.draw()
 
     def on_view_change(self, view_params):
         """Handle changes in view settings"""
