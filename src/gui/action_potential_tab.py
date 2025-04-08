@@ -206,27 +206,71 @@ class ActionPotentialTab:
             raise
 
     def on_show_points_change(self):
-        """Handle changes to point tracking visibility"""
-        try:
-            # Get the parent application
-            app = self.parent.winfo_toplevel()
-            
-            # Update point tracker visibility
-            if hasattr(app, 'point_tracker') and app.point_tracker:
-                app.point_tracker.show_annotations = self.show_points.get()
-                app.canvas.draw_idle()
-                
-            # Update display mode
-            if self.show_points.get():
-                self.update_callback({'display_mode': 'all_points'})
+        """
+        Handle changes to show_points checkbox - only affects annotations
+        and visual elements, not basic point tracking.
+        """
+        import os, time
+        func_version = "1.0.1"  # Increment when modifying
+        app_logger.debug(f"Running on_show_points_change version {func_version}")
+        
+        # Get current state
+        show_points = self.show_points.get()
+        app_logger.info(f"Show points toggled: {show_points}")
+        
+        # Get main app reference
+        app = self.parent.master
+        
+        # Send update with integration ranges
+        ranges = {}
+        if hasattr(self, 'range_manager'):
+            ranges = self.range_manager.get_integration_ranges()
+            # Enable/disable range sliders
+            self.range_manager.enable_controls(show_points)
+        
+        # Build params for update
+        params = {
+            'integration_ranges': ranges,
+            'show_points': show_points,  # This now only controls visual elements
+            'visibility_update': True
+        }
+        
+        # Call update callback
+        if self.update_callback:
+            self.update_callback(params)
+        
+        # Set display mode to points when enabled
+        if show_points:
+            if hasattr(self, 'modified_display_mode'):
+                self.modified_display_mode.set("all_points")
+            if hasattr(self, 'average_display_mode'):
+                self.average_display_mode.set("all_points")
+        
+        # Toggle annotation display only (point tracking remains active)
+        if hasattr(app, 'point_tracker'):
+            # Use new property if available
+            if hasattr(app.point_tracker, 'show_annotations'):
+                app.point_tracker.show_annotations = show_points
+                app_logger.debug(f"Set point_tracker.show_annotations to {show_points}")
             else:
-                self.update_callback({'display_mode': 'basic'})
-                
-            app_logger.info(f"Show points toggled: {self.show_points.get()}")
+                # Fall back to original property
+                app.point_tracker.show_points = show_points
+                app_logger.debug(f"Set point_tracker.show_points to {show_points}")
             
-        except Exception as e:
-            app_logger.error(f"Error updating point tracking visibility: {str(e)}")
-            raise
+            # Clear annotations if disabled
+            if not show_points:
+                app.point_tracker.clear_annotations()
+        
+        # Update point tracking settings
+        if hasattr(app, 'update_point_tracking'):
+            # Only controls annotation visibility now
+            app.update_point_tracking(show_points)
+            app_logger.debug(f"Called app.update_point_tracking({show_points})")
+        
+        # Toggle span selectors
+        if hasattr(app, 'toggle_span_selectors'):
+            app.toggle_span_selectors(show_points)
+            app_logger.debug(f"Toggled span selectors: {show_points}")
 
     def on_integration_change(self):
         """Handle changes to integration range visibility"""

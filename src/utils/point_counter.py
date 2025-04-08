@@ -1,350 +1,357 @@
-import numpy as np
-from matplotlib.backend_bases import MouseEvent
-from matplotlib.text import Annotation
-from src.utils.logger import app_logger
-import os, time
-print(f"point_counter.py last modified: {time.ctime(os.path.getmtime(__file__))}")
-
-
 class CurvePointTracker:
-    def __init__(self, ax, processor=None):
+    """
+    Enhanced point tracker that shows point information in the status bar.
+    Always tracks points but only shows annotations when enabled.
+    """
+    
+    def __init__(self, figure, ax, status_var=None):
         """
         Initialize the curve point tracker.
         
         Args:
-            ax: Matplotlib axes object
-            processor: ActionPotentialProcessor instance (optional)
+            figure: Matplotlib figure
+            ax: Matplotlib axes
+            status_var: StringVar for status display
         """
-        self.ax = ax
-        self.processor = processor
-        self._show_annotations = False
-        self.annotations = []
+        import os, time
+        class_version = "1.0.1"  # Increment when modifying
+        app_logger.debug(f"Initializing CurvePointTracker version {class_version}")
         
-        # Curve type information (offsets might still be useful for blue/magenta)
-        self.curve_types = {
-            'orange': {'name': 'Orange', 'color': 'orange'},
-            'blue': {'name': 'Blue', 'color': 'blue', 'offset': 28}, # Keep offset for time mapping
-            'magenta': {'name': 'Magenta', 'color': 'magenta', 'offset': 28}, # Keep offset for time mapping
-            'purple_hyperpol': {'name': 'Purple Hyperpol', 'color': 'purple'},
-            'purple_depol': {'name': 'Purple Depol', 'color': 'purple'}
-            # Removed points and fixed offsets for purple as they depend on processor slices
+        self.fig = figure
+        self.ax = ax
+        self.status_var = status_var  # For status bar display
+        self.annotations = {}
+        self.curve_data = {
+            'orange': {'data': None, 'times': None, 'visible': True},
+            'blue': {'data': None, 'times': None, 'visible': True},
+            'magenta': {'data': None, 'times': None, 'visible': True},
+            'purple_hyperpol': {'data': None, 'times': None, 'visible': True},
+            'purple_depol': {'data': None, 'times': None, 'visible': True}
         }
         
-        # Slices are now expected to be set on the processor object
-        # self._hyperpol_slice = (1028, 1227) # Removed
-        # self._depol_slice = (828, 1028)   # Removed
+        # Use separate flags for different features:
+        # - show_points remains for backward compatibility
+        # - show_annotations controls visual annotations specifically
+        self.show_points = False
+        self.show_annotations = False
         
-        # Connect to mouse events
-        self.cid = self.ax.figure.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
+        self.last_cursor_pos = None
+        self.current_time = 0
+        self.current_value = 0
         
-        app_logger.info("Curve point tracker initialized (will wait for processor)")
-
-    @property
-    def show_annotations(self):
-        return self._show_annotations
-
-    @show_annotations.setter
-    def show_annotations(self, value):
-        self._show_annotations = value
-        if not value and self.annotations:
-            for ann in self.annotations:
-                ann.remove()
-            self.annotations = []
-            self.ax.figure.canvas.draw_idle()
-        app_logger.info(f"Show points toggled: {value}")
-
-    def _on_mouse_move(self, event):
-        """Handle mouse movement events"""
-        # Basic checks
-        if event.inaxes != self.ax:
-            # app_logger.debug("Mouse outside axes.")
-            return
-        if not self.processor:
-            app_logger.warning("Point tracker has no processor reference.")
-            return
-        if event.xdata is None or event.ydata is None:
-            # app_logger.debug("Mouse event has no data coordinates (maybe outside data range).")
-            return
-
-        # app_logger.debug(f"Mouse move event: x={event.xdata:.2f}, y={event.ydata:.2f}")
+        # Display names for the curves
+        self.curve_names = {
+            'orange': 'Orange',
+            'blue': 'Blue',
+            'magenta': 'Magenta',
+            'purple_hyperpol': 'Purple Hyperpol',
+            'purple_depol': 'Purple Depol'
+        }
         
-        # Get nearest point
-        point_info = self._get_nearest_point(event.xdata, event.ydata)
+        # Text position offsets for each curve to prevent overlap
+        self.offsets = {
+            'orange': (10, 10),
+            'blue': (10, 30),
+            'magenta': (10, 50),
+            'purple_hyperpol': (10, 70),
+            'purple_depol': (10, 90)
+        }
         
-        # Update status bar
-        self._update_status_bar(event, point_info)
+        # Color mapping for annotation text
+        self.colors = {
+            'orange': 'orange',
+            'blue': 'blue',
+            'magenta': 'magenta',
+            'purple_hyperpol': 'purple',
+            'purple_depol': 'darkviolet'
+        }
         
-        # Update annotations if we have point info
-        if point_info:
-            # app_logger.debug(f"Updating annotation for point: {point_info}")
-            self._update_annotations(point_info)
-        else:
-            # app_logger.debug("No point info found, clearing annotations.")
-            # Clear annotations if no point is found
-            if self.annotations:
-                for ann in self.annotations:
-                    ann.remove()
-                self.annotations = []
-                self.ax.figure.canvas.draw_idle()
-
-    def _get_nearest_point(self, x, y):
-        """Find the nearest point to the cursor position across all curves"""
-        # Check processor and time_data validity
-        if not self.processor or not hasattr(self.processor, 'time_data') or self.processor.time_data is None:
-            app_logger.warning("Processor or essential time_data not available for point finding.")
-            return None
-
-        # Check if x or y is None (redundant due to caller check, but safe)
-        if x is None or y is None:
-            app_logger.warning("Received None for x or y coordinates.")
-            return None
-            
-        # Calculate a dynamic distance threshold
+        # Known slice indices from logs for reference mapping
+        self._hyperpol_slice = (1028, 1227)  # From logs
+        self._depol_slice = (828, 1028)      # From logs
+        
+        # Setup event connections - make sure these are active
+        self._connect()
+        
+    def _connect(self):
+        """Connect to matplotlib event callbacks with improved error handling"""
         try:
-            xlim = self.ax.get_xlim()
-            ylim = self.ax.get_ylim()
-            view_width = xlim[1] - xlim[0]
-            view_height = ylim[1] - ylim[0]
-            if view_width <= 0 or view_height <= 0:
-                 max_dist_sq = 100.0 # Fallback threshold
-                 app_logger.warning(f"Invalid view limits ({view_width}, {view_height}), using fallback threshold.")
-            else:
-                # Threshold based on a small fraction of the view diagonal
-                diagonal = np.sqrt(view_width**2 + view_height**2)
-                threshold_fraction = 0.03 # 3% - adjust if needed
-                max_dist_sq = (threshold_fraction * diagonal)**2
+            # Disconnect existing connections if they exist
+            if hasattr(self, 'cid_move'):
+                try:
+                    self.fig.canvas.mpl_disconnect(self.cid_move)
+                except:
+                    pass
+                
+            if hasattr(self, 'cid_figure'):
+                try:
+                    self.fig.canvas.mpl_disconnect(self.cid_figure)
+                except:
+                    pass
+                
+            # Create new connections
+            self.cid_move = self.fig.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
+            self.cid_figure = self.fig.canvas.mpl_connect('figure_leave_event', self._on_figure_leave)
+            
+            # Force a canvas draw to ensure connections are active
+            self.fig.canvas.draw_idle()
+            
+            app_logger.info("Point tracker event connections established")
+            return True
+            
         except Exception as e:
-            app_logger.error(f"Error calculating dynamic threshold: {e}, using fallback.")
-            max_dist_sq = 100.0
-            
-        app_logger.debug(f"Cursor at ({x:.2f}, {y:.2f}). Max dist sq threshold: {max_dist_sq:.4f}")
-
-        min_dist_sq = np.inf
-        best_point_info = None
-        found_on_curve = None # Track which curve had the minimum distance
+            app_logger.error(f"Failed to connect point tracker events: {str(e)}")
+            return False
+    
+    def _on_mouse_move(self, event):
+        """
+        Handle mouse movement events - always track points but only show
+        annotations if enabled.
+        """
+        # Quick exit if not over axes
+        if not event.inaxes or event.inaxes != self.ax:
+            if hasattr(self, 'status_var') and self.status_var:
+                self.status_var.set("")
+            self.clear_annotations()
+            return
         
-        # Check each curve type
-        for curve_type in ['orange', 'purple_hyperpol', 'purple_depol', 'magenta', 'blue']:
-            app_logger.debug(f"Checking curve: {curve_type}")
-            # Use processor directly to get data
-            curve_data = getattr(self.processor, f'{curve_type}_curve', None)
-            time_data = getattr(self.processor, 'time_data', None) # Get potentially full time data
-            
-            # Ensure data is valid and has the expected structure
-            if curve_data is None:
-                app_logger.debug(f" -> Skipping: {curve_type}_curve is None.")
+        # Store basic position info
+        self.last_cursor_pos = (event.x, event.y)
+        self.current_time = event.xdata  # In ms
+        self.current_value = event.ydata  # In pA
+        basic_info = f"Time: {self.current_time:.1f} ms, Current: {self.current_value:.1f} pA"
+        
+        # ALWAYS check for nearby points regardless of show_points flag
+        found_point = False
+        status_parts = [basic_info]
+        
+        # Check curves in priority order for better performance
+        priority_curves = ['orange', 'purple_hyperpol', 'purple_depol', 'magenta', 'blue']
+        
+        for curve_type in priority_curves:
+            # Skip if curve data isn't available
+            if (self.curve_data[curve_type]['data'] is None or 
+                len(self.curve_data[curve_type]['data']) == 0):
                 continue
-            if time_data is None:
-                 app_logger.debug(f" -> Skipping: time_data is None (should not happen here).")
-                 continue # Should have been caught earlier
                 
-            # Ensure curve_data and time_data are numpy arrays and not empty
-            try:
-                curve_data = np.asarray(curve_data)
-                time_data = np.asarray(time_data) # Ensure processor's time_data is array
-                if curve_data.size == 0:
-                     app_logger.debug(f" -> Skipping: {curve_type}_curve data array is empty.")
-                     continue
-                if time_data.size == 0:
-                     app_logger.debug(f" -> Skipping: time_data array is empty.")
-                     continue # Should not happen if check at start passed
-
-                # --- Determine the correct time subset and curve subset for distance calculation --- 
-                idx_offset = 0 # Default offset for time_data indexing
-                if curve_type == 'purple_hyperpol':
-                    # Get slice dynamically from processor
-                    slice_ = getattr(self.processor, '_hyperpol_slice', None)
-                    if slice_ is None:
-                        app_logger.debug(f" -> Skipping {curve_type}: _hyperpol_slice missing on processor.")
-                        continue
-                    # Basic sanity check
-                    if not isinstance(slice_, tuple) or len(slice_) != 2 or slice_[1] > len(time_data) or slice_[0] >= slice_[1]:
-                         app_logger.warning(f"Invalid slice for {curve_type} from processor: {slice_} vs time_data len {len(time_data)}")
-                         continue
-                    time_subset = time_data[slice_[0]:slice_[1]]
-                    curve_subset = curve_data # purple curve is already sliced relative to its time points
-                    idx_offset = slice_[0]
-                    if len(time_subset) != len(curve_subset):
-                        app_logger.warning(f" -> Length mismatch for {curve_type} after getting slice {slice_}: time={len(time_subset)}, curve={len(curve_subset)}")
-                        continue
-                elif curve_type == 'purple_depol':
-                     # Get slice dynamically from processor
-                    slice_ = getattr(self.processor, '_depol_slice', None)
-                    if slice_ is None:
-                        app_logger.debug(f" -> Skipping {curve_type}: _depol_slice missing on processor.")
-                        continue
-                     # Basic sanity check
-                    if not isinstance(slice_, tuple) or len(slice_) != 2 or slice_[1] > len(time_data) or slice_[0] >= slice_[1]:
-                         app_logger.warning(f"Invalid slice for {curve_type} from processor: {slice_} vs time_data len {len(time_data)}")
-                         continue
-                    time_subset = time_data[slice_[0]:slice_[1]]
-                    curve_subset = curve_data # purple curve is already sliced relative to its time points
-                    idx_offset = slice_[0]
-                    if len(time_subset) != len(curve_subset):
-                        app_logger.warning(f" -> Length mismatch for {curve_type} after getting slice {slice_}: time={len(time_subset)}, curve={len(curve_subset)}")
-                        continue
-                elif curve_type == 'magenta':
-                    # Magenta often corresponds to the first N points derived from segments
-                    num_points = len(curve_data)
-                    # Use offset defined in curve_types if needed for time mapping
-                    idx_offset = self.curve_types[curve_type].get('offset', 0) 
-                    if idx_offset + num_points > len(time_data):
-                         app_logger.warning(f" -> Invalid time range for {curve_type} based on offset {idx_offset} and length {num_points} vs time data {len(time_data)}")
-                         continue
-                    time_subset = time_data[idx_offset : idx_offset + num_points]
-                    curve_subset = curve_data
-                elif curve_type == 'blue':
-                    # Blue corresponds to specific segments concatenated
-                    num_points = len(curve_data)
-                    # Use offset defined in curve_types if needed for time mapping
-                    idx_offset = self.curve_types[curve_type].get('offset', 0)
-                    if idx_offset + num_points > len(time_data):
-                        app_logger.warning(f" -> Invalid time range for {curve_type} based on offset {idx_offset} and length {num_points} vs time data {len(time_data)}")
-                        continue
-                    time_subset = time_data[idx_offset : idx_offset + num_points]
-                    curve_subset = curve_data
-                else: # Orange curve presumably uses full available time_data that corresponds to its length
-                     if len(time_data) < len(curve_data):
-                         app_logger.warning(f" -> Length mismatch for {curve_type}: time={len(time_data)}, curve={len(curve_data)}")
-                         continue
-                     # Use the portion of time_data that matches the orange curve length
-                     time_subset = time_data[:len(curve_data)] 
-                     curve_subset = curve_data
-                     idx_offset = 0 # Orange starts at the beginning of its relevant time data
+            # Try to find nearest point
+            point_info = self._get_nearest_point(event.x, event.y, curve_type)
+            if point_info is not None:
+                idx, distance, x_val, y_val = point_info
                 
-                # Final check after determining subsets
-                if len(time_subset) == 0 or len(curve_subset) == 0:
-                    app_logger.debug(f" -> Skipping {curve_type}: Subset resulted in empty array.")
-                    continue
-                if len(time_subset) != len(curve_subset):
-                    app_logger.warning(f" -> Final length mismatch for {curve_type} after slicing: time={len(time_subset)}, curve={len(curve_subset)}")
-                    continue
-                app_logger.debug(f" -> Using {len(time_subset)} points for {curve_type} (offset: {idx_offset})")
-                    
-            except Exception as e:
-                app_logger.error(f" -> Error processing data setup for curve {curve_type}: {e}")
-                continue
-
-            # Calculate squared distances for the relevant subset
-            try:
-                dist_sq = (time_subset - x)**2 + (curve_subset - y)**2
-            except ValueError as e:
-                 app_logger.error(f" -> Error calculating dist_sq for {curve_type}: {e}. Shapes: time={time_subset.shape}, curve={curve_subset.shape}, x={x}, y={y}")
-                 continue # Skip this curve if calculation fails
-            
-            # Find the index of the minimum distance within the subset
-            if len(dist_sq) == 0:
-                 app_logger.debug(f" -> dist_sq array empty for {curve_type}.")
-                 continue # Skip if empty after processing
-            closest_idx_in_subset = np.nanargmin(dist_sq)
-            min_dist_sq_curve = dist_sq[closest_idx_in_subset]
-            
-            app_logger.info(f" -> Curve {curve_type}: min_dist_sq={min_dist_sq_curve:.4f} at subset index {closest_idx_in_subset}")
-
-            # If this point is closer than the best found so far
-            if min_dist_sq_curve < min_dist_sq:
-                min_dist_sq = min_dist_sq_curve
-                found_on_curve = curve_type # Track the best curve found so far
+                # Get corresponding orange point
+                orange_idx = self._get_corresponding_orange_point(curve_type, idx)
                 
-                # The actual index in the *original* specific curve data array (e.g., purple_curve)
-                original_curve_idx = closest_idx_in_subset
-                # The corresponding index in the *full time_data* array
-                time_data_idx = closest_idx_in_subset + idx_offset
+                # Format for status bar (use 1-based indexing for display)
+                point_text = f"{self.curve_names[curve_type]} Point: {idx+1}"
+                if orange_idx is not None and curve_type != 'orange':
+                    point_text += f" (Orange: {orange_idx+1})"
                 
-                # Simplified: orange index *is* the time_data index relative to the start of analysis time.
-                orange_idx = time_data_idx
-
-                # Store info about this potentially best point
-                best_point_info = {
-                    'curve_type': curve_type,
-                    'point_idx': original_curve_idx, # Index within the specific curve data
-                    'orange_idx': orange_idx, # Index relative to the start of the orange curve/time_data
-                    'x': time_subset[closest_idx_in_subset],
-                    'y': curve_subset[closest_idx_in_subset],
-                    'dist_sq': min_dist_sq_curve
-                }
-                app_logger.info(f" -> New best point candidate found on {curve_type}. dist_sq={min_dist_sq_curve:.4f}")
+                status_parts.append(point_text)
+                found_point = True
+                
+                # Only show annotations if that feature is enabled
+                if hasattr(self, 'show_annotations') and self.show_annotations:
+                    self._add_annotation(curve_type, idx, x_val, y_val, orange_idx)
+                elif self.show_points:  # Backward compatibility
+                    self._add_annotation(curve_type, idx, x_val, y_val, orange_idx)
+                
+                # For better performance, only show the first point found
+                break
+        
+        # ALWAYS update status bar with point info (the key part is that this
+        # happens regardless of show_points or show_annotations flags)
+        if hasattr(self, 'status_var') and self.status_var:
+            if found_point:
+                self.status_var.set(" | ".join(status_parts))
             else:
-                 # app_logger.debug(f" -> Point on {curve_type} (dist_sq={min_dist_sq_curve:.4f}) not closer than current best (dist_sq={min_dist_sq:.4f} on {found_on_curve}).") # Kept as DEBUG
-                 pass
-
-        # Check distance threshold for the overall best point found
-        if best_point_info and best_point_info['dist_sq'] <= max_dist_sq:
-            app_logger.info(f"<<< Nearest point ACCEPTED on {best_point_info['curve_type']} at index {best_point_info['point_idx']} (Orange: {best_point_info['orange_idx']}). DistSq: {best_point_info['dist_sq']:.4f} <= Threshold: {max_dist_sq:.4f} >>>")
-            # Remove dist_sq before returning if not needed elsewhere
-            del best_point_info['dist_sq'] 
-            return best_point_info
-        elif best_point_info:
-            # A point was found, but it was too far
-            app_logger.info(f"Nearest point REJECTED (on {best_point_info['curve_type']} idx {best_point_info['point_idx']}) was too far: dist_sq {best_point_info['dist_sq']:.4f} > threshold {max_dist_sq:.4f}")
-            return None
-        else:
-            # No point found on any curve or all failed checks
-            app_logger.info("No point found on any curve within threshold after checking all curves.")
-            return None
-
-    def _get_corresponding_orange_point(self, curve_type, point_idx):
-        """DEPRECATED or needs simplification. Orange index is derived directly in _get_nearest_point now."""
-        # This logic is complex and potentially wrong. 
-        # The mapping should be based on the time_data index calculated in _get_nearest_point.
-        # Returning the time_data index directly as orange_idx is simpler for this structure.
-        # app_logger.warning("_get_corresponding_orange_point is deprecated. Use index derived in _get_nearest_point.")
-        # Fallback/placeholder - this likely won't be used if _get_nearest_point is correct
-        if curve_type == 'orange':
-            return point_idx
-        else:
-            # This is just a guess based on old logic, likely incorrect
-            # Correct calculation is time_data_idx = closest_idx_in_subset + idx_offset
-            # Need to pass this index from the caller or recalculate offset here.
-            # The approach in _get_nearest_point is better.
-            pass 
-        return None # Indicate deprecated/handled elsewhere
-
-    def _update_status_bar(self, event, point_info):
-        """Update the status bar with point information"""
-        if point_info:
-            curve_info = self.curve_types[point_info['curve_type']]
-            status_text = (f"Time: {point_info['x']:.1f} ms, "
-                         f"Current: {point_info['y']:.1f} pA | "
-                         f"{curve_info['name']} Point: {point_info['point_idx'] + 1} "
-                         f"(Orange: {point_info['orange_idx'] + 1})")
-        else:
-            status_text = f"Time: {event.xdata:.1f} ms, Current: {event.ydata:.1f} pA"
+                self.status_var.set(basic_info)
+                # Clear annotations when no point is found
+                self.clear_annotations()
+    
+    def _get_nearest_point(self, x, y, curve_type):
+        """
+        Find the nearest point on a curve to the cursor position with 
+        optimized performance and adaptive thresholds.
+        
+        Args:
+            x: Cursor x-position (in pixel coordinates)
+            y: Cursor y-position (in pixel coordinates)
+            curve_type: Type of curve ('orange', 'blue', etc.)
             
-        # Always update through toolbar
-        if hasattr(self.ax.figure.canvas, 'toolbar'):
-            self.ax.figure.canvas.toolbar.set_message(status_text)
-
-    def _update_annotations(self, point_info):
-        """Update visual annotations for the point"""
-        # Clear previous annotations
-        for ann in self.annotations:
-            ann.remove()
-        self.annotations = []
+        Returns:
+            Tuple of (index, distance, x_val, y_val) or None if no point found
+        """
+        # Quick exit if curve data is missing
+        curve_data = self.curve_data[curve_type]
+        if curve_data['data'] is None or len(curve_data['data']) == 0:
+            return None
+            
+        data = curve_data['data']
+        times = curve_data['times']
         
-        # Create new annotation
-        curve_info = self.curve_types[point_info['curve_type']]
-        text = (f"{curve_info['name']} Point: {point_info['point_idx'] + 1} "
-                f"[Orange: {point_info['orange_idx'] + 1}]")
+        if times is None or len(times) == 0:
+            return None
+        
+        # Convert mouse coordinates to data coordinates 
+        data_x, data_y = self.ax.transData.inverted().transform((x, y))
+        
+        # For time data that's in seconds but displayed in milliseconds
+        # Check units based on axis label or data range
+        x_label = self.ax.get_xlabel().lower()
+        if 'ms' in x_label or np.max(times) < 10:  # Likely in seconds if max is small
+            compare_x = data_x / 1000.0  # Convert ms to s for comparison
+        else:
+            compare_x = data_x  # Already in same units
+        
+        # Use vectorized operations for performance
+        distances = np.abs(times - compare_x)
+        idx = np.argmin(distances)
+        
+        # Calculate distances in both dimensions
+        x_distance = distances[idx]
+        y_distance = abs(data[idx] - data_y)
+        
+        # Get axis ranges for adaptive thresholds
+        x_range = self.ax.get_xlim()
+        y_range = self.ax.get_ylim()
+        
+        # Adaptive thresholds based on data and axis ranges
+        # Use smaller of percentage-based or absolute thresholds
+        x_threshold = min(0.02 * abs(x_range[1] - x_range[0]), 5) / 1000.0  # Convert ms to s, max 5ms
+        y_threshold = max(0.05 * abs(y_range[1] - y_range[0]), 50)  # Min 50pA for usability
+        
+        # Accept the point if it's within threshold
+        if x_distance <= x_threshold and y_distance <= y_threshold:
+            return (idx, np.sqrt(x_distance**2 + y_distance**2), times[idx], data[idx])
+        
+        return None
+    
+    def _get_corresponding_orange_point(self, curve_type, point_idx):
+        """
+        Get the corresponding orange curve point index using known offsets
+        from the logs.
+        
+        Args:
+            curve_type: Type of curve
+            point_idx: Index of the point on the curve
                 
-        ann = Annotation(text, 
-                        xy=(point_info['x'], point_info['y']),
-                        xytext=(10, 10),
-                        textcoords='offset points',
-                        bbox=dict(boxstyle='round,pad=0.5', 
-                                fc='white', 
-                                alpha=0.7),
-                        arrowprops=dict(arrowstyle='->',
-                                     connectionstyle='arc3,rad=0'))
-                                     
-        ann.set_color(curve_info['color'])
-        self.ax.add_artist(ann)
-        self.annotations.append(ann)
+        Returns:
+            Corresponding orange point index or None
+        """
+        # Quick exit if orange curve not available
+        if 'orange' not in self.curve_data or self.curve_data['orange']['data'] is None:
+            return None
+            
+        # Get orange curve length for bounds checking
+        orange_len = len(self.curve_data['orange']['data'])
         
+        if curve_type == 'blue' or curve_type == 'normalized':
+            # Blue curve: offset by starting point (28)
+            offset_idx = point_idx + 28
+            if offset_idx < orange_len:
+                return offset_idx
+        
+        elif curve_type == 'magenta' or curve_type == 'average':
+            # Magenta curve: also offset by starting point (28)
+            offset_idx = point_idx + 28
+            if offset_idx < orange_len:
+                return offset_idx
+        
+        elif curve_type == 'purple_hyperpol':
+            # Use hardcoded slice from logs: 1028-1227
+            if hasattr(self, '_hyperpol_slice'):
+                start_idx = self._hyperpol_slice[0]
+            else:
+                start_idx = 1028  # Default from logs
+                
+            offset_idx = point_idx + start_idx
+            if offset_idx < orange_len:
+                return offset_idx
+        
+        elif curve_type == 'purple_depol':
+            # Use hardcoded slice from logs: 828-1028
+            if hasattr(self, '_depol_slice'):
+                start_idx = self._depol_slice[0]
+            else:
+                start_idx = 828  # Default from logs
+                
+            offset_idx = point_idx + start_idx
+            if offset_idx < orange_len:
+                return offset_idx
+        
+        return None
+    
+    def _add_annotation(self, curve_type, idx, x_val, y_val, orange_idx=None):
+        """Helper function to add or update a single annotation"""
+        # Clear all existing annotations first
+        self.clear_annotations()
+        
+        # Create annotation text (use 1-based indexing for display)
+        curve_name = self.curve_names.get(curve_type, curve_type.capitalize())
+        
+        if orange_idx is not None and curve_type != 'orange':
+            text = f"{curve_name} point: {idx+1} [Orange: {orange_idx+1}]"
+        else:
+            text = f"{curve_name} point: {idx+1}"
+        
+        # Create annotation with arrow
+        self.annotations[curve_type] = self.ax.annotate(
+            text, 
+            xy=(x_val * 1000, y_val),  # Convert s to ms if needed
+            xytext=self.offsets.get(curve_type, (10, 10)),
+            textcoords='offset points',
+            color=self.colors.get(curve_type, 'black'),
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8),
+            arrowprops=dict(arrowstyle="->", color=self.colors.get(curve_type, 'black'))
+        )
+        
+        # Redraw canvas - only needed for annotations
         self.ax.figure.canvas.draw_idle()
-
-    def disconnect(self):
-        """Disconnect the event handler"""
-        if hasattr(self, 'cid'):
-            self.ax.figure.canvas.mpl_disconnect(self.cid)
-            app_logger.debug("Curve point tracker disconnected") 
+    
+    def clear_annotations(self):
+        """Remove all point annotations"""
+        for ann in self.annotations.values():
+            if ann is not None:
+                try:
+                    ann.remove()
+                except:
+                    pass
+        self.annotations = {}
+        
+    def set_curve_data(self, curve_type, data, times=None, visible=True):
+        """
+        Set data for a specific curve type.
+        
+        Args:
+            curve_type: Type of curve ('orange', 'blue', 'magenta', 'purple_hyperpol', 'purple_depol')
+            data: Array of y-values
+            times: Array of x-values (timestamps)
+            visible: Whether the curve is visible
+        """
+        if curve_type in self.curve_data:
+            if data is None:
+                app_logger.debug(f"Ignoring None data for {curve_type}")
+                return
+                
+            self.curve_data[curve_type]['data'] = data
+            self.curve_data[curve_type]['times'] = times
+            self.curve_data[curve_type]['visible'] = visible
+            app_logger.debug(f"Set {curve_type} curve data with {len(data)} points, visible={visible}")
+    
+    def set_show_points(self, show):
+        """
+        Set whether to show point annotations (backwards compatibility).
+        
+        Args:
+            show: Boolean flag to show or hide point annotations
+        """
+        self.show_points = show
+        if hasattr(self, 'show_annotations'):
+            self.show_annotations = show
+            
+        app_logger.debug(f"Point annotation display set to {show}")
+        
+        # Clear annotations if they are being hidden
+        if not show:
+            self.clear_annotations()
