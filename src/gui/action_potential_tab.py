@@ -25,6 +25,7 @@ class ActionPotentialTab:
         self.setup_parameter_controls()
         self.setup_analysis_controls()
         self.setup_point_tracking_controls()
+        self.initialize_purple_regression_controls()
         
         app_logger.debug("Action potential analysis tab initialized")
 
@@ -205,6 +206,29 @@ class ActionPotentialTab:
             app_logger.error(f"Error setting up point tracking controls: {str(e)}")
             raise
 
+    def initialize_purple_regression_controls(self):
+        """Initialize the purple regression controls."""
+        # Create a frame for purple regression controls
+        self.purple_regression_frame = ttk.LabelFrame(self, text="Lila regressziós ecset")
+        self.purple_regression_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+        
+        # Add controls
+        self.purple_regression_enable = tk.BooleanVar(value=False)
+        self.purple_regression_check = ttk.Checkbutton(
+            self.purple_regression_frame,
+            text="Lila regressziós ecset engedélyezése",
+            variable=self.purple_regression_enable,
+            command=self.on_purple_regression_toggle
+        )
+        self.purple_regression_check.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        
+        self.purple_regression_reset = ttk.Button(
+            self.purple_regression_frame,
+            text="Regresszió visszaállítása",
+            command=self.on_purple_regression_reset
+        )
+        self.purple_regression_reset.grid(row=0, column=1, padx=5, pady=5, sticky="e")
+
     def on_show_points_change(self):
         """
         Handle changes to show_points checkbox - only affects annotations
@@ -299,6 +323,18 @@ class ActionPotentialTab:
         except Exception as e:
             app_logger.error(f"Error updating regression line visibility: {str(e)}")
             raise
+
+    def on_purple_regression_toggle(self):
+        """Handle purple regression toggle."""
+        if hasattr(self.master, 'toggle_purple_regression_brush'):
+            self.master.toggle_purple_regression_brush(self.purple_regression_enable.get())
+            app_logger.info(f"Lila regressziós ecset {'engedélyezve' if self.purple_regression_enable.get() else 'letiltva'}")
+
+    def on_purple_regression_reset(self):
+        """Handle purple regression reset."""
+        if hasattr(self.master, 'reset_purple_regression'):
+            self.master.reset_purple_regression()
+            app_logger.info("Lila regresszió visszaállítva")
 
     def create_tooltip(self, widget, text):
         """Create tooltip for a widget"""

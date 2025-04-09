@@ -576,6 +576,64 @@ class SignalAnalyzerApp:
             app_logger.error(f"Error exporting figure: {str(e)}")
             messagebox.showerror("Error", f"Failed to export figure: {str(e)}")
 
+    def initialize_purple_regression_support(self):
+        """Initialize the purple regression feature support."""
+        from src.utils.purple_regression_brush import PurpleRegressionCurveTracker
+        
+        # Check if we need to replace the point tracker with the enhanced version
+        if hasattr(self, 'point_tracker'):
+            # Store old point tracker settings
+            old_tracker = self.point_tracker
+            old_fig = old_tracker.fig
+            old_ax = old_tracker.ax
+            old_callback = old_tracker.curve_click_callback
+            
+            # Replace with enhanced version
+            self.point_tracker = PurpleRegressionCurveTracker(
+                old_fig, old_ax, self, old_callback
+            )
+            
+            # Copy over any important state
+            if hasattr(old_tracker, 'curve_data'):
+                self.point_tracker.curve_data = old_tracker.curve_data
+            if hasattr(old_tracker, 'colors'):
+                self.point_tracker.colors = old_tracker.colors
+            if hasattr(old_tracker, 'labels_added'):
+                self.point_tracker.labels_added = old_tracker.labels_added
+        
+        # Ensure ActionPotentialProcessor has the integrals attribute
+        if hasattr(self, 'action_potential_processor'):
+            if not hasattr(self.action_potential_processor, 'integrals'):
+                self.action_potential_processor.integrals = {'hyperpol': 0, 'depol': 0}
+            
+            # Add storage for original curves if not present
+            if not hasattr(self.action_potential_processor, 'hyperpol_average'):
+                if hasattr(self.action_potential_processor, 'modified_hyperpol'):
+                    self.action_potential_processor.hyperpol_average = self.action_potential_processor.modified_hyperpol.copy()
+                else:
+                    self.action_potential_processor.hyperpol_average = None
+                
+            if not hasattr(self.action_potential_processor, 'depol_average'):
+                if hasattr(self.action_potential_processor, 'modified_depol'):
+                    self.action_potential_processor.depol_average = self.action_potential_processor.modified_depol.copy()
+                else:
+                    self.action_potential_processor.depol_average = None
+        
+        # Initialize the UI controls in the ActionPotentialTab if available
+        if hasattr(self, 'action_potential_tab'):
+            if not hasattr(self.action_potential_tab, 'purple_regression_frame'):
+                self.action_potential_tab.initialize_purple_regression_controls()
+
+    def toggle_purple_regression_brush(self, enable=False):
+        """Adapter method to toggle purple regression brush state."""
+        if hasattr(self, 'point_tracker') and hasattr(self.point_tracker, 'toggle_purple_regression_brush'):
+            self.point_tracker.toggle_purple_regression_brush(enable)
+
+    def reset_purple_regression(self):
+        """Adapter method to reset all purple regression corrections."""
+        if hasattr(self, 'point_tracker') and hasattr(self.point_tracker, 'reset_purple_regression'):
+            self.point_tracker.reset_purple_regression()
+
 # Only add this if it's in the main script file
 if __name__ == "__main__":
     try:
