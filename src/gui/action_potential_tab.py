@@ -26,6 +26,7 @@ class ActionPotentialTab:
         self.setup_analysis_controls()
         self.setup_point_tracking_controls()
         self.initialize_purple_regression_controls()
+        self.initialize_integration_point_controls()
         
         app_logger.debug("Action potential analysis tab initialized")
 
@@ -209,14 +210,14 @@ class ActionPotentialTab:
     def initialize_purple_regression_controls(self):
         """Initialize the purple regression controls."""
         # Create a frame for purple regression controls
-        self.purple_regression_frame = ttk.LabelFrame(self, text="Lila regressziós ecset")
+        self.purple_regression_frame = ttk.LabelFrame(self, text="Purple curve regression")
         self.purple_regression_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
         
         # Add controls
         self.purple_regression_enable = tk.BooleanVar(value=False)
         self.purple_regression_check = ttk.Checkbutton(
             self.purple_regression_frame,
-            text="Lila regressziós ecset engedélyezése",
+            text="Allow purple curve regression",
             variable=self.purple_regression_enable,
             command=self.on_purple_regression_toggle
         )
@@ -224,10 +225,54 @@ class ActionPotentialTab:
         
         self.purple_regression_reset = ttk.Button(
             self.purple_regression_frame,
-            text="Regresszió visszaállítása",
+            text="Reset regression",
             command=self.on_purple_regression_reset
         )
         self.purple_regression_reset.grid(row=0, column=1, padx=5, pady=5, sticky="e")
+
+    def initialize_integration_point_controls(self):
+        """Inicializálja a lila görbék integrálási pont vezérlőit."""
+        # A vezérlő importálása
+        from src.analysis.purple_integration_control import PurpleIntegrationController
+        
+        # Fő ábra és tengely lekérése a szülő alkalmazásból
+        app = self.parent.master
+        if not hasattr(app, 'fig') or not hasattr(app, 'ax'):
+            return
+        
+        # Integrálási pont vezérlő létrehozása
+        self.integration_point_controller = PurpleIntegrationController(
+            self,
+            app.canvas,
+            app.ax,
+            callback=self.on_integration_point_change
+        )
+        
+        # Váltó gomb hozzáadása a jobb oldali kerethez
+        if not hasattr(self, 'right_frame'):
+            self.right_frame = ttk.Frame(self.frame)
+            self.right_frame.pack(side='right', fill='y', padx=5)
+        
+        # Váltó gomb hozzáadása (elválasztóként a többi vezérlőtől)
+        ttk.Separator(self.right_frame).pack(fill='x', pady=10)
+        
+        self.toggle_integration_points_button = ttk.Button(
+            self.right_frame,
+            text="Integrálási pontok váltása",
+            command=self.toggle_integration_point_controls
+        )
+        self.toggle_integration_points_button.pack(fill='x', pady=2)
+
+    def toggle_integration_point_controls(self):
+        """Váltja az integrálási pont vezérlők láthatóságát."""
+        if hasattr(self, 'integration_point_controller'):
+            self.integration_point_controller.toggle_visibility()
+            
+            # Gomb szövegének frissítése
+            if self.integration_point_controller.is_active:
+                self.toggle_integration_points_button.configure(text="Integrálási pontok elrejtése")
+            else:
+                self.toggle_integration_points_button.configure(text="Integrálási pontok megjelenítése")
 
     def on_show_points_change(self):
         """
@@ -335,6 +380,31 @@ class ActionPotentialTab:
         if hasattr(self.master, 'reset_purple_regression'):
             self.master.reset_purple_regression()
             app_logger.info("Lila regresszió visszaállítva")
+
+    def on_integration_point_change(self, integration_data, apply=False):
+        """Feldolgozza az integrálási pontok változásait."""
+        # Tartománykezelő lekérése
+        if not hasattr(self, 'range_selection_manager'):
+            return
+        
+        # Új integrálok számítása egyéni kezdőpontokkal
+        if hasattr(self.range_selection_manager, 'calculate_range_integral_with_custom_start'):
+            self.range_selection_manager.calculate_range_integral_with_custom_start(integration_data)
+        
+        # Ha apply True, frissítjük a processzort az új értékekkel
+        if apply and hasattr(self.parent.master, 'action_potential_processor'):
+            processor = self.parent.master.action_potential_processor
+            
+            # Aktuális integrálértékek lekérése a tartománykezelőből
+            if hasattr(self.range_selection_manager, 'current_integrals'):
+                integrals = self.range_selection_manager.current_integrals
+                
+                # Processzor integrálértékeinek frissítése ha léteznek
+                if hasattr(processor, 'integrals'):
+                    processor.integrals.update({
+                        'hyperpol': integrals.get('hyperpol_integral', 0),
+                        'depol': integrals.get('depol_integral', 0)
+                    })
 
     def create_tooltip(self, widget, text):
         """Create tooltip for a widget"""

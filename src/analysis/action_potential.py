@@ -40,6 +40,22 @@ class ActionPotentialProcessor:
         self._hyperpol_slice = None  # Initialize slice attribute
         self._depol_slice = None    # Initialize slice attribute
         
+        self.time = None
+        self.filtered_data = None
+        self.integrals = {
+            'hyperpol': 0,
+            'depol': 0
+        }
+        self.averages = {
+            'hyperpol': 0,
+            'depol': 0
+        }
+        self.custom_integration_points = {
+            'hyperpol': None,
+            'depol': None
+        }
+        self.use_custom_points = False
+        
         app_logger.debug("Action potential processor initialized")
 
     def set_data(self, data, time_data):
@@ -287,3 +303,47 @@ class ActionPotentialProcessor:
         else:
              app_logger.info("Depol Slice: Not stored or unavailable.")
         app_logger.info("-------------------------------")
+
+    def set_custom_integration_points(self, points):
+        """Beállítja az egyéni integrálási pontokat."""
+        if points is None:
+            self.custom_integration_points = {
+                'hyperpol': None,
+                'depol': None
+            }
+            self.use_custom_points = False
+            return
+        
+        self.custom_integration_points.update(points)
+        self.use_custom_points = True
+
+    def calculate_integrals(self, time, data, ranges):
+        """Kiszámítja az integrálokat az adott tartományokon."""
+        if self.use_custom_points and self.custom_integration_points:
+            # Egyéni pontok használata
+            hyperpol_start = self.custom_integration_points['hyperpol']
+            depol_start = self.custom_integration_points['depol']
+            
+            if hyperpol_start is not None:
+                ranges['hyperpol'] = (hyperpol_start, ranges['hyperpol'][1])
+            if depol_start is not None:
+                ranges['depol'] = (depol_start, ranges['depol'][1])
+        
+        # Integrálok számítása a tartományokon
+        self.integrals['hyperpol'] = np.trapz(
+            data[ranges['hyperpol'][0]:ranges['hyperpol'][1]],
+            time[ranges['hyperpol'][0]:ranges['hyperpol'][1]]
+        )
+        
+        self.integrals['depol'] = np.trapz(
+            data[ranges['depol'][0]:ranges['depol'][1]],
+            time[ranges['depol'][0]:ranges['depol'][1]]
+        )
+        
+        # Átlagok számítása
+        self.averages['hyperpol'] = np.mean(
+            data[ranges['hyperpol'][0]:ranges['hyperpol'][1]]
+        )
+        self.averages['depol'] = np.mean(
+            data[ranges['depol'][0]:ranges['depol'][1]]
+        )
