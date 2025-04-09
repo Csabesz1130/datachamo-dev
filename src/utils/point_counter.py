@@ -1,3 +1,6 @@
+import numpy as np
+from src.utils.logger import app_logger
+
 class CurvePointTracker:
     """
     Enhanced point tracker that shows point information in the status bar.
