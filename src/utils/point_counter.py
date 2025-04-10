@@ -358,3 +358,168 @@ class CurvePointTracker:
         # Clear annotations if they are being hidden
         if not show:
             self.clear_annotations()
+
+class PurpleIntegrationController:
+    """Vezérli a lila görbék integrálási pontjait."""
+    
+    def __init__(self, figure, ax, processor=None):
+        """Inicializálja az integrálási pont vezérlőt."""
+        self.fig = figure
+        self.ax = ax
+        self.processor = processor
+        self.is_active = False
+        self.integration_points = {
+            'hyperpol': None,
+            'depol': None
+        }
+        self.annotations = {}
+        
+        # Eseménykezelők csatlakoztatása
+        self._connect()
+        
+    def _connect(self):
+        """Csatlakoztatja az eseménykezelőket."""
+        self.cid_press = self.fig.canvas.mpl_connect('button_press_event', self._on_press)
+        self.cid_release = self.fig.canvas.mpl_connect('button_release_event', self._on_release)
+        self.cid_motion = self.fig.canvas.mpl_connect('motion_notify_event', self._on_motion)
+        
+    def _disconnect(self):
+        """Leválasztja az eseménykezelőket."""
+        if hasattr(self, 'cid_press'):
+            self.fig.canvas.mpl_disconnect(self.cid_press)
+        if hasattr(self, 'cid_release'):
+            self.fig.canvas.mpl_disconnect(self.cid_release)
+        if hasattr(self, 'cid_motion'):
+            self.fig.canvas.mpl_disconnect(self.cid_motion)
+            
+    def _on_press(self, event):
+        """Egérgomb lenyomás kezelése."""
+        if not self.is_active or not event.inaxes:
+            return
+            
+        # Ellenőrizzük, hogy a lila görbék tartományában vagyunk-e
+        if self._is_in_purple_range(event.xdata):
+            self.start_point = event.xdata
+            self._create_selection_rectangle(event)
+            
+    def _on_release(self, event):
+        """Egérgomb felengedés kezelése."""
+        if not self.is_active or not hasattr(self, 'start_point'):
+            return
+            
+        if event.inaxes:
+            end_point = event.xdata
+            self._update_integration_points(self.start_point, end_point)
+            
+        self._remove_selection_rectangle()
+        delattr(self, 'start_point')
+        
+    def _on_motion(self, event):
+        """Egér mozgás kezelése."""
+        if not self.is_active or not hasattr(self, 'start_point') or not event.inaxes:
+            return
+            
+        self._update_selection_rectangle(event)
+        
+    def _is_in_purple_range(self, x):
+        """Ellenőrzi, hogy az x koordináta a lila görbék tartományában van-e."""
+        if not hasattr(self.processor, '_hyperpol_slice') or not hasattr(self.processor, '_depol_slice'):
+            return False
+            
+        hyperpol_start = self.processor._hyperpol_slice[0]
+        depol_end = self.processor._depol_slice[1]
+        
+        return hyperpol_start <= x <= depol_end
+        
+    def _create_selection_rectangle(self, event):
+        """Létrehozza a kijelölési téglalapot."""
+        self.rect = patches.Rectangle(
+            (self.start_point, self.ax.get_ylim()[0]),
+            0,
+            self.ax.get_ylim()[1] - self.ax.get_ylim()[0],
+            fill=True,
+            alpha=0.3,
+            color='gray'
+        )
+        self.ax.add_patch(self.rect)
+        self.fig.canvas.draw_idle()
+        
+    def _update_selection_rectangle(self, event):
+        """Frissíti a kijelölési téglalapot."""
+        if hasattr(self, 'rect'):
+            width = event.xdata - self.start_point
+            self.rect.set_width(width)
+            self.fig.canvas.draw_idle()
+            
+    def _remove_selection_rectangle(self):
+        """Eltávolítja a kijelölési téglalapot."""
+        if hasattr(self, 'rect'):
+            self.rect.remove()
+            delattr(self, 'rect')
+            self.fig.canvas.draw_idle()
+            
+    def _update_integration_points(self, start, end):
+        """Frissíti az integrálási pontokat."""
+        if start > end:
+            start, end = end, start
+            
+        # Meghatározzuk, hogy melyik tartományba esik a kijelölés
+        if hasattr(self.processor, '_hyperpol_slice') and hasattr(self.processor, '_depol_slice'):
+            hyperpol_start = self.processor._hyperpol_slice[0]
+            depol_end = self.processor._depol_slice[1]
+            
+            if start >= hyperpol_start and end <= depol_end:
+                # Meghatározzuk, hogy hyperpol vagy depol tartományba esik
+                if start < (hyperpol_start + depol_end) / 2:
+                    self.integration_points['hyperpol'] = start
+                else:
+                    self.integration_points['depol'] = start
+                    
+                # Frissítjük a processzort
+                if self.processor:
+                    self.processor.set_custom_integration_points(self.integration_points)
+                    
+                # Frissítjük az annotációkat
+                self._update_annotations()
+                
+    def _update_annotations(self):
+        """Frissíti az annotációkat."""
+        # Töröljük a régi annotációkat
+        for ann in self.annotations.values():
+            if ann:
+                ann.remove()
+        self.annotations.clear()
+        
+        # Új annotációk hozzáadása
+        for point_type, point in self.integration_points.items():
+            if point is not None:
+                text = f"{point_type} start: {point:.2f}"
+                self.annotations[point_type] = self.ax.annotate(
+                    text,
+                    xy=(point, self.ax.get_ylim()[1]),
+                    xytext=(10, 10),
+                    textcoords='offset points',
+                    bbox=dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.5),
+                    arrowprops=dict(arrowstyle='->')
+                )
+                
+        self.fig.canvas.draw_idle()
+        
+    def reset(self):
+        """Visszaállítja az integrálási pontokat."""
+        self.integration_points = {
+            'hyperpol': None,
+            'depol': None
+        }
+        
+        # Töröljük az annotációkat
+        for ann in self.annotations.values():
+            if ann:
+                ann.remove()
+        self.annotations.clear()
+        
+        # Frissítjük a processzort
+        if self.processor:
+            self.processor.set_custom_integration_points(None)
+            
+        self.fig.canvas.draw_idle()
