@@ -234,7 +234,8 @@ class ActionPotentialTab:
         """Inicializálja az integrálási pont vezérlőket."""
         app_logger.info("Integrálási pont vezérlők inicializálása kezdődik")
         try:
-            from src.utils.point_counter import PurpleIntegrationController
+            # Importáljuk a vezérlőt a helyes útvonalról
+            from src.analysis.purple_integration_control import PurpleIntegrationController
             app_logger.debug("PurpleIntegrationController modul sikeresen importálva")
             
             # Ellenőrizzük, hogy van-e főablak és ábra
@@ -243,14 +244,6 @@ class ActionPotentialTab:
                 return
             
             app_logger.debug("Ábra és tengely elérhető, inicializálás folytatása")
-            
-            # Inicializáljuk az integrálási pont vezérlőt
-            self.integration_controller = PurpleIntegrationController(
-                self.master.fig,
-                self.master.ax,
-                self.master.processor
-            )
-            app_logger.debug("PurpleIntegrationController példány létrehozva")
             
             # Ellenőrizzük, hogy van-e jobb oldali keret
             if not hasattr(self, 'right_frame'):
@@ -278,6 +271,14 @@ class ActionPotentialTab:
             )
             self.reset_integration_button.pack(fill=tk.X, padx=5, pady=2)
             app_logger.debug("Vezérlő gombok létrehozva")
+            
+            # Létrehozzuk az integrálási pont vezérlőt
+            self.integration_controller = PurpleIntegrationController(
+                self.master.fig,
+                self.master.ax,
+                self.master.processor
+            )
+            app_logger.debug("PurpleIntegrationController példány létrehozva")
             
             app_logger.info("Integrálási pont vezérlők sikeresen inicializálva")
             
