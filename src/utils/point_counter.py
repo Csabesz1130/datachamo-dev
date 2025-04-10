@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.patches as patches
 from src.utils.logger import app_logger
 
 class CurvePointTracker:
@@ -364,25 +365,38 @@ class PurpleIntegrationController:
     
     def __init__(self, figure, ax, processor=None):
         """Inicializálja az integrálási pont vezérlőt."""
-        self.fig = figure
-        self.ax = ax
-        self.processor = processor
-        self.is_active = False
-        self.integration_points = {
-            'hyperpol': None,
-            'depol': None
-        }
-        self.annotations = {}
-        
-        # Eseménykezelők csatlakoztatása
-        self._connect()
+        app_logger.info("PurpleIntegrationController inicializálása kezdődik")
+        try:
+            self.fig = figure
+            self.ax = ax
+            self.processor = processor
+            self.is_active = False
+            self.integration_points = {
+                'hyperpol': None,
+                'depol': None
+            }
+            self.annotations = {}
+            
+            # Eseménykezelők csatlakoztatása
+            self._connect()
+            app_logger.info("PurpleIntegrationController sikeresen inicializálva")
+            
+        except Exception as e:
+            app_logger.error(f"Hiba a PurpleIntegrationController inicializálásakor: {str(e)}")
+            raise
         
     def _connect(self):
         """Csatlakoztatja az eseménykezelőket."""
-        self.cid_press = self.fig.canvas.mpl_connect('button_press_event', self._on_press)
-        self.cid_release = self.fig.canvas.mpl_connect('button_release_event', self._on_release)
-        self.cid_motion = self.fig.canvas.mpl_connect('motion_notify_event', self._on_motion)
-        
+        try:
+            app_logger.debug("Eseménykezelők csatlakoztatása kezdődik")
+            self.cid_press = self.fig.canvas.mpl_connect('button_press_event', self._on_press)
+            self.cid_release = self.fig.canvas.mpl_connect('button_release_event', self._on_release)
+            self.cid_motion = self.fig.canvas.mpl_connect('motion_notify_event', self._on_motion)
+            app_logger.info("Eseménykezelők sikeresen csatlakoztatva")
+        except Exception as e:
+            app_logger.error(f"Hiba az eseménykezelők csatlakoztatásakor: {str(e)}")
+            raise
+
     def _disconnect(self):
         """Leválasztja az eseménykezelőket."""
         if hasattr(self, 'cid_press'):

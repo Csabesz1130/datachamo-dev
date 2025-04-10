@@ -232,13 +232,17 @@ class ActionPotentialTab:
 
     def initialize_integration_point_controls(self):
         """Inicializálja az integrálási pont vezérlőket."""
+        app_logger.info("Integrálási pont vezérlők inicializálása kezdődik")
         try:
             from src.utils.point_counter import PurpleIntegrationController
+            app_logger.debug("PurpleIntegrationController modul sikeresen importálva")
             
             # Ellenőrizzük, hogy van-e főablak és ábra
             if not hasattr(self.master, 'fig') or not hasattr(self.master, 'ax'):
                 app_logger.error("Nincs elérhető ábra az integrálási pont vezérlők inicializálásához")
                 return
+            
+            app_logger.debug("Ábra és tengely elérhető, inicializálás folytatása")
             
             # Inicializáljuk az integrálási pont vezérlőt
             self.integration_controller = PurpleIntegrationController(
@@ -246,10 +250,18 @@ class ActionPotentialTab:
                 self.master.ax,
                 self.master.processor
             )
+            app_logger.debug("PurpleIntegrationController példány létrehozva")
+            
+            # Ellenőrizzük, hogy van-e jobb oldali keret
+            if not hasattr(self, 'right_frame'):
+                app_logger.debug("Jobb oldali keret létrehozása")
+                self.right_frame = ttk.Frame(self.frame)
+                self.right_frame.pack(side='right', fill='y', padx=5)
             
             # Hozzáadjuk a vezérlőket a jobb oldali kerethez
             self.integration_frame = ttk.LabelFrame(self.right_frame, text="Integrálási pontok")
             self.integration_frame.pack(fill=tk.X, padx=5, pady=5)
+            app_logger.debug("Integrálási pont keret létrehozva")
             
             # Vezérlő gombok
             self.toggle_integration_button = ttk.Button(
@@ -265,29 +277,46 @@ class ActionPotentialTab:
                 command=self.reset_integration_points
             )
             self.reset_integration_button.pack(fill=tk.X, padx=5, pady=2)
+            app_logger.debug("Vezérlő gombok létrehozva")
             
-            app_logger.info("Integrálási pont vezérlők inicializálva")
+            app_logger.info("Integrálási pont vezérlők sikeresen inicializálva")
             
+        except ImportError as e:
+            app_logger.error(f"Modul importálási hiba: {str(e)}")
+            raise
         except Exception as e:
             app_logger.error(f"Hiba az integrálási pont vezérlők inicializálásakor: {str(e)}")
+            raise
 
     def toggle_integration_point_controls(self):
         """Váltja az integrálási pont vezérlők láthatóságát."""
-        if hasattr(self, 'integration_controller'):
-            current_state = self.integration_controller.is_active
-            self.integration_controller.is_active = not current_state
-            self.toggle_integration_button.config(
-                text="Integrálási pontok" if current_state else "Kikapcsolás"
-            )
-            app_logger.info(f"Integrálási pont vezérlők {'bekapcsolva' if not current_state else 'kikapcsolva'}")
-            self.master.canvas.draw_idle()
+        app_logger.debug("Integrálási pont vezérlők váltása kezdődik")
+        try:
+            if hasattr(self, 'integration_controller'):
+                current_state = self.integration_controller.is_active
+                self.integration_controller.is_active = not current_state
+                self.toggle_integration_button.config(
+                    text="Integrálási pontok" if current_state else "Kikapcsolás"
+                )
+                app_logger.info(f"Integrálási pont vezérlők {'bekapcsolva' if not current_state else 'kikapcsolva'}")
+                self.master.canvas.draw_idle()
+            else:
+                app_logger.warning("Nincs inicializált integrálási pont vezérlő")
+        except Exception as e:
+            app_logger.error(f"Hiba az integrálási pont vezérlők váltásakor: {str(e)}")
 
     def reset_integration_points(self):
         """Visszaállítja az integrálási pontokat az alapértelmezett értékekre."""
-        if hasattr(self, 'integration_controller'):
-            self.integration_controller.reset()
-            app_logger.info("Integrálási pontok visszaállítva")
-            self.master.canvas.draw_idle()
+        app_logger.debug("Integrálási pontok visszaállítása kezdődik")
+        try:
+            if hasattr(self, 'integration_controller'):
+                self.integration_controller.reset()
+                app_logger.info("Integrálási pontok visszaállítva")
+                self.master.canvas.draw_idle()
+            else:
+                app_logger.warning("Nincs inicializált integrálási pont vezérlő")
+        except Exception as e:
+            app_logger.error(f"Hiba az integrálási pontok visszaállításakor: {str(e)}")
 
     def on_show_points_change(self):
         """
