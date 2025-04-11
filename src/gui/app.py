@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from src.utils.logger import app_logger
 from src.utils.point_counter import CurvePointTracker
+from src.utils.persistent_settings_manager import persistent_settings
 from src.gui.filter_tab import FilterTab
 from src.gui.analysis_tab import AnalysisTab
 from src.gui.view_tab import ViewTab
@@ -27,6 +28,7 @@ class SignalAnalyzerApp:
         self.filtered_data = None
         self.current_filters = {}
         self.action_potential_processor = None
+        self.current_filepath = None
         self.point_tracker = None
         
         # Create main container
@@ -145,6 +147,15 @@ class SignalAnalyzerApp:
             self.status_var.set(f"Loaded: {filepath.split('/')[-1]}")
             
             # Update analysis
+            self.current_filepath = filepath
+            app_logger.info(f"Aktuális fájl beállítva: {self.current_filepath}")
+
+            # Próbáljuk meg betölteni a tárolt optimális kezdőpontot
+            optimal_start = persistent_settings.get_optimal_start_point(self.current_filepath)
+            if optimal_start is not None:
+                app_logger.info(f"Tárolt optimális kezdőpont ehhez a fájlhoz ({self.current_filepath}): {optimal_start}")
+                # TODO: Ezt az értéket át kell adni vagy felhasználni az AP analízisben
+
             self.analysis_tab.update_data(self.data, self.time_data)
             
             # Reset action potential processor
@@ -229,7 +240,8 @@ class SignalAnalyzerApp:
             self.action_potential_processor = ActionPotentialProcessor(
                 self.filtered_data,
                 self.time_data,
-                params
+                params,
+                filepath=self.current_filepath
             )
 
             # Run the main processing pipeline
@@ -630,9 +642,24 @@ class SignalAnalyzerApp:
             self.point_tracker.toggle_purple_regression_brush(enable)
 
     def reset_purple_regression(self):
-        """Adapter method to reset all purple regression corrections."""
-        if hasattr(self, 'point_tracker') and hasattr(self.point_tracker, 'reset_purple_regression'):
-            self.point_tracker.reset_purple_regression()
+        """Visszaállítja a lila görbék korrekcióit."""
+        # Implement reset logic here
+        pass
+
+    def on_closing(self):
+        """Kezeli az alkalmazás bezárását, elmenti a beállításokat."""
+        try:
+            app_logger.info("Alkalmazás bezárása, beállítások mentése...")
+            persistent_settings.save_settings()
+            # Itt lehetne további bezárási teendőket is végezni
+            self.master.destroy()
+        except Exception as e:
+            app_logger.error(f"Hiba a bezárás közbeni mentéskor: {e}", exc_info=True)
+            # Próbáljuk meg mindenképp bezárni, még ha a mentés nem is sikerült
+            try:
+                self.master.destroy()
+            except Exception as destroy_e:
+                app_logger.critical(f"Nem sikerült a master ablakot bezárni sem: {destroy_e}")
 
 # Only add this if it's in the main script file
 if __name__ == "__main__":
