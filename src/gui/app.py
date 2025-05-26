@@ -211,7 +211,7 @@ class SignalAnalyzerApp:
         """
         # Add version tracking for debugging
         import os, time
-        func_version = "1.0.1"  # Increment when modifying
+        func_version = "1.1.0"  # Updated for derivative analysis
         app_logger.debug(f"Running on_action_potential_analysis version {func_version}")
         
         # Handle visibility-only updates
@@ -297,6 +297,105 @@ class SignalAnalyzerApp:
             if isinstance(purple_results, dict):
                 results.update(purple_results)
 
+            # ===== DERIVATIVE ANALYSIS SECTION =====
+            # Check if derivative analysis is enabled
+            if hasattr(self.action_potential_tab, 'enable_derivatives') and \
+            self.action_potential_tab.enable_derivatives.get():
+                
+                app_logger.info("Performing derivative analysis")
+                
+                # Get the derivative analyzer instance
+                if not hasattr(self.action_potential_tab, 'derivative_analyzer'):
+                    from src.analysis.derivative_analyzer import DerivativeAnalyzer
+                    self.action_potential_tab.derivative_analyzer = DerivativeAnalyzer()
+                
+                derivative_analyzer = self.action_potential_tab.derivative_analyzer
+                
+                # Determine group assignment
+                group = 'control'  # Default
+                if hasattr(self.action_potential_tab, 'group_var'):
+                    group = self.action_potential_tab.group_var.get()
+                # Auto-detect mutant from filename
+                elif self.current_filepath and 'cav1.1_delta_e_29' in self.current_filepath.lower():
+                    group = 'mutant'
+                    app_logger.info(f"Auto-detected mutant group from filename: {self.current_filepath}")
+                
+                # Analyze derivatives for the main curves
+                curve_analyses = []
+                
+                # Analyze original filtered data
+                main_deriv_results = derivative_analyzer.analyze_curve(
+                    self.time_data,
+                    self.filtered_data,
+                    f"{os.path.basename(self.current_filepath)}_filtered",
+                    group
+                )
+                curve_analyses.append(('Filtered', main_deriv_results))
+                
+                # Analyze orange curve if available
+                if self.orange_curve is not None and self.orange_curve_times is not None:
+                    orange_deriv_results = derivative_analyzer.analyze_curve(
+                        self.orange_curve_times,
+                        self.orange_curve,
+                        f"{os.path.basename(self.current_filepath)}_orange",
+                        group
+                    )
+                    curve_analyses.append(('Orange', orange_deriv_results))
+                
+                # Analyze purple curves if available
+                if modified_hyperpol is not None and modified_hyperpol_times is not None:
+                    hyperpol_deriv_results = derivative_analyzer.analyze_curve(
+                        modified_hyperpol_times,
+                        modified_hyperpol,
+                        f"{os.path.basename(self.current_filepath)}_hyperpol",
+                        group
+                    )
+                    curve_analyses.append(('Hyperpol', hyperpol_deriv_results))
+                
+                if modified_depol is not None and modified_depol_times is not None:
+                    depol_deriv_results = derivative_analyzer.analyze_curve(
+                        modified_depol_times,
+                        modified_depol,
+                        f"{os.path.basename(self.current_filepath)}_depol",
+                        group
+                    )
+                    curve_analyses.append(('Depol', depol_deriv_results))
+                
+                # Format derivative results for display
+                derivative_text_parts = [f"Group: {group.upper()}", ""]
+                
+                for curve_name, deriv_result in curve_analyses:
+                    max_slope = deriv_result['max_slope']['max_slope']
+                    max_slope_time = deriv_result['max_slope']['max_slope_time']
+                    rise_time = deriv_result['rise_time']['rise_time']
+                    
+                    derivative_text_parts.extend([
+                        f"{curve_name} Curve:",
+                        f"  Max Slope: {max_slope:.2f} pA/ms at {max_slope_time:.2f} ms",
+                        f"  Rise Time (10-90%): {rise_time:.2f} ms" if not np.isnan(rise_time) else "  Rise Time: N/A",
+                        ""
+                    ])
+                
+                # Add to main results
+                results['derivative_analysis'] = {
+                    'group': group,
+                    'main_curve': main_deriv_results,
+                    'curves_analyzed': curve_analyses
+                }
+                
+                # Update the derivative display
+                if hasattr(self.action_potential_tab, 'derivative_results_text'):
+                    self.action_potential_tab.derivative_results_text.set('\n'.join(derivative_text_parts))
+                
+                # Store derivative analyzer reference for point tracking
+                if hasattr(self, 'point_tracker') and self.point_tracker:
+                    self.point_tracker.derivative_analyzer = derivative_analyzer
+                    # Store the name of the current curve for derivative lookup
+                    self.point_tracker.current_curve_name = f"{os.path.basename(self.current_filepath)}_filtered"
+                    app_logger.debug("Derivative analyzer linked to point tracker")
+            
+            # ===== END DERIVATIVE ANALYSIS SECTION =====
+
             # Update the plot with all curves
             self.update_plot_with_processed_data(
                 processed_data,
@@ -318,16 +417,15 @@ class SignalAnalyzerApp:
             if hasattr(self.action_potential_tab, 'set_processor'):
                 self.action_potential_tab.set_processor(self.action_potential_processor)
 
-            # --- ADD HISTORY ENTRY HERE ---
-            # If we have a history manager and no errors, store the analysis results.
-            if self.history_manager:
+            # Add history entry if we have a history manager
+            if hasattr(self, 'history_manager') and self.history_manager:
                 self.history_manager.add_entry(
-                    filename=self.current_file,
+                    filename=self.current_filepath,
                     results=results,
                     analysis_type="manual"
                 )
             
-            # NEW CODE: Update point tracking with latest processor data
+            # Update point tracking with latest processor data
             # This ensures point tracking always works regardless of checkbox state
             if hasattr(self, 'point_tracker'):
                 app_logger.debug("Updating point tracker with latest processor data")
@@ -337,7 +435,7 @@ class SignalAnalyzerApp:
             app_logger.info("Action potential analysis completed successfully")
 
         except Exception as e:
-            app_logger.error(f"Error in action potential analysis: {str(e)}")
+            app_logger.error(f"Error in action potential analysis: {str(e)}", exc_info=True)
             messagebox.showerror("Error", f"Analysis failed: {str(e)}")
             if hasattr(self.action_potential_tab, 'disable_points_ui'):
                 self.action_potential_tab.disable_points_ui()

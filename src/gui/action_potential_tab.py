@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from src.utils.logger import app_logger
+from src.analysis.derivative_analyzer import DerivativeAnalyzer
 
 class ActionPotentialTab:
     def __init__(self, parent, callback):
@@ -27,6 +28,7 @@ class ActionPotentialTab:
         self.setup_point_tracking_controls()
         self.initialize_purple_regression_controls()
         self.initialize_integration_point_controls()
+        self.initialize_derivative_controls()
         
         app_logger.debug("Action potential analysis tab initialized")
 
@@ -385,6 +387,35 @@ class ActionPotentialTab:
         if hasattr(app, 'toggle_span_selectors'):
             app.toggle_span_selectors(show_points)
             app_logger.debug(f"Toggled span selectors: {show_points}")
+
+    def setup_derivative_controls(self):
+        """Setup derivative analysis controls"""
+        deriv_frame = ttk.LabelFrame(self.frame, text="Derivative Analysis")
+        deriv_frame.pack(fill='x', padx=5, pady=5)
+        
+        # Enable derivative analysis
+        self.enable_derivatives = tk.BooleanVar(value=False)
+        ttk.Checkbutton(deriv_frame, text="Calculate Derivatives",
+                    variable=self.enable_derivatives).pack(pady=2)
+        
+        # Group selection
+        group_frame = ttk.Frame(deriv_frame)
+        group_frame.pack(fill='x', padx=5, pady=2)
+        ttk.Label(group_frame, text="Group:").pack(side='left')
+        self.group_var = tk.StringVar(value="control")
+        ttk.Radiobutton(group_frame, text="Control", 
+                    variable=self.group_var, value="control").pack(side='left')
+        ttk.Radiobutton(group_frame, text="Mutant (CAV1.1 ΔE29)", 
+                    variable=self.group_var, value="mutant").pack(side='left')
+        
+        # Results display
+        self.derivative_results_text = tk.StringVar(value="No derivative analysis performed")
+        ttk.Label(deriv_frame, textvariable=self.derivative_results_text,
+                wraplength=300).pack(fill='x', padx=5, pady=5)
+        
+        # Comparison button
+        ttk.Button(deriv_frame, text="Compare Groups",
+                command=self.compare_groups).pack(pady=5)
 
     def on_integration_change(self):
         """Handle changes to integration range visibility"""

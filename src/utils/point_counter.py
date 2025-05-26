@@ -172,6 +172,14 @@ class CurvePointTracker:
                 self.status_var.set(basic_info)
                 # Clear annotations when no point is found
                 self.clear_annotations()
+
+        if hasattr(self, 'derivative_analyzer') and self.derivative_analyzer:
+            # Get derivative at current position
+            deriv_info = self.derivative_analyzer.get_derivative_at_time(
+                'current', self.current_time
+            )
+            if 'first_derivative' in deriv_info:
+                status_parts.append(f"dI/dt: {deriv_info['first_derivative']:.2f} pA/ms")
     
     def _get_nearest_point(self, x, y, curve_type):
         """

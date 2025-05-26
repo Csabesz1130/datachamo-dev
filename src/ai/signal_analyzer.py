@@ -6,6 +6,7 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple
 from src.utils.logger import app_logger
 from tensorflow.keras.models import load_model
+from src.utils.persistent_settings_manager import PersistentSettingsManager
 
 class SignalAnalyzer:
     """
