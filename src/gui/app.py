@@ -91,7 +91,7 @@ class SignalAnalyzerApp:
         self.toolbar.update()
         
         # Initialize point tracker with axes
-        self.point_tracker = CurvePointTracker(self.ax)
+        self.point_tracker = CurvePointTracker(self.fig, self.ax)
         self.point_tracker.show_annotations = False
         app_logger.info("Point tracker initialized with axes")
 

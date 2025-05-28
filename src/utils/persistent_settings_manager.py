@@ -168,7 +168,7 @@ if __name__ == '__main__':
 
     # Teszt optimális pontok beállítása
     file1 = "/path/to/data/file1.csv"
-    file2 = "C:\Users\Test\Documents\data2.txt"
+    file2 = r"C:\Users\Test\Documents\data2.txt"
 
     print(f"Kezdőpont lekérése '{file1}' előtt: {persistent_settings.get_optimal_start_point(file1)}")
     persistent_settings.set_optimal_start_point(file1, 150)

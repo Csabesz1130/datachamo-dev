@@ -1,6 +1,6 @@
 import numpy as np
 from scipy import signal
-from scipy.integrate import simps
+from scipy.integrate import simpson
 from scipy.stats import linregress
 from src.utils.logger import app_logger
 
@@ -242,7 +242,7 @@ class ActionPotentialProcessor:
             # Calculate integral for each cycle
             integrals = []
             for cycle, cycle_time in zip(self.cycles, self.cycle_times):
-                integral = simps(cycle, cycle_time)
+                integral = simpson(cycle, cycle_time)
                 integrals.append(integral)
                 
             # Calculate average integral
