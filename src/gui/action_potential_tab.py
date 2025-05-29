@@ -212,7 +212,7 @@ class ActionPotentialTab:
     def initialize_purple_regression_controls(self):
         """Initialize the purple regression controls."""
         # Create a frame for purple regression controls
-        self.purple_regression_frame = ttk.LabelFrame(self, text="Purple curve regression")
+        self.purple_regression_frame = ttk.LabelFrame(self.frame, text="Purple curve regression")
         self.purple_regression_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
         
         # Add controls
